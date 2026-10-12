@@ -1,5 +1,5 @@
-import opentype from "opentype.js";
 import { FontDef } from "./fonts";
+import ImageTracer from "imagetracerjs";
 
 export interface VectorOptions {
   text: string;
@@ -9,90 +9,201 @@ export interface VectorOptions {
   lineSpacing: number;
 }
 
-interface PathCommand {
-  type: "M" | "L" | "C" | "Q" | "Z";
-  x?: number;
-  y?: number;
-  x1?: number;
-  y1?: number;
-  x2?: number;
-  y2?: number;
+interface Polyline {
+  x: number;
+  y: number;
 }
 
-/** Load a font using opentype.js */
-async function loadFont(url: string) {
-  const res = await fetch(url);
-  const buf = await res.arrayBuffer();
-  return opentype.parse(buf);
+/**
+ * Rasterize text to a high-res canvas using the browser's native shaper
+ * (HarfBuzz handles Urdu Nastaliq perfectly), then trace to vector paths.
+ */
+async function renderToCanvas(
+  text: string,
+  font: FontDef,
+  widthMm: number,
+  lineSpacing: number
+): Promise<HTMLCanvasElement> {
+  const fontFamily = font.family;
+  const weight = font.weight;
+
+  // Make sure font is available in document
+  try {
+    await document.fonts.load(`${weight} 400px "${fontFamily}"`, "اب");
+  } catch {
+    /* ignore */
+  }
+
+  const lines = text.replace(/\r/g, "").split("\n");
+  const FONT_PX = 400;
+
+  // Measurement canvas
+  const measure = document.createElement("canvas");
+  const mctx = measure.getContext("2d")!;
+  mctx.font = `${weight} ${FONT_PX}px "${fontFamily}"`;
+  mctx.direction = /[\u0590-\u08ff]/.test(text) ? "rtl" : "ltr";
+
+  // Find widest line
+  let maxW = 0;
+  for (const line of lines) {
+    const w = mctx.measureText(line).width;
+    if (w > maxW) maxW = w;
+  }
+
+  const pad = FONT_PX * font.padFactor;
+  const lineHeight = FONT_PX * 1.4;
+  const gap = lineHeight * lineSpacing;
+  const totalH =
+    lines.length * lineHeight + (lines.length - 1) * gap + pad * 2;
+  const totalW = maxW + pad * 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil(totalW));
+  canvas.height = Math.max(1, Math.ceil(totalH));
+  const ctx = canvas.getContext("2d", { alpha: true })!;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.font = `${weight} ${FONT_PX}px "${fontFamily}"`;
+  ctx.fillStyle = "#000000"; // solid black text for tracing
+  ctx.textBaseline = "top";
+  ctx.direction = mctx.direction;
+  ctx.textAlign = mctx.direction === "rtl" ? "right" : "left";
+
+  const x = mctx.direction === "rtl" ? canvas.width - pad : pad;
+  let y = pad;
+
+  for (const line of lines) {
+    if (line.trim()) {
+      ctx.fillText(line, x, y);
+    }
+    y += lineHeight + gap;
+  }
+
+  return canvas;
 }
 
-/** Flatten bezier curves into line segments (for DXF) */
-function flattenPath(
-  commands: PathCommand[],
-  tolerance = 0.1
-): Array<{ x: number; y: number }[]> {
-  const polylines: Array<{ x: number; y: number }[]> = [];
-  let current: { x: number; y: number }[] = [];
+/** Convert canvas to SVG path strings using ImageTracer */
+function traceCanvas(canvas: HTMLCanvasElement): string {
+  const ctx = canvas.getContext("2d")!;
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+  const svg = ImageTracer.imagedataToSVG(imageData, {
+    ltres: 0.5,
+    qtres: 0.5,
+    pathomit: 4,
+    rightangleenhance: false,
+    colorsampling: 0,
+    numberofcolors: 2,
+    mincolorratio: 0,
+    colorquantcycles: 1,
+    layering: 0,
+    strokewidth: 0,
+    linefilter: false,
+    scale: 1,
+    roundcoords: 2,
+    viewbox: false,
+    desc: false,
+    lcpr: 0,
+    qcpr: 0,
+    blurradius: 0,
+    blurdelta: 20,
+  });
+
+  return svg;
+}
+
+/** Extract path `d` attributes from an SVG string */
+function extractPathData(svg: string): string[] {
+  const paths: string[] = [];
+  const re = /<path[^>]*\sd="([^"]+)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(svg)) !== null) {
+    paths.push(m[1]);
+  }
+  return paths;
+}
+
+/**
+ * Very small SVG path parser — supports M, L, C, Q, Z with absolute coords.
+ * ImageTracer outputs this subset.
+ */
+function parsePath(d: string): Polyline[][] {
+  const polylines: Polyline[][] = [];
+  let current: Polyline[] = [];
   let cx = 0,
     cy = 0;
 
-  const bezierPoint = (
-    p0: any, p1: any, p2: any, p3: any, t: number
+  const tokens = d.match(/[MLCQZmlcqz]|-?\d*\.?\d+/g) || [];
+  let i = 0;
+
+  const num = () => parseFloat(tokens[i++]);
+
+  const bezierC = (
+    x0: number, y0: number, x1: number, y1: number,
+    x2: number, y2: number, x3: number, y3: number
   ) => {
-    const mt = 1 - t;
-    return {
-      x:
-        mt * mt * mt * p0.x +
-        3 * mt * mt * t * p1.x +
-        3 * mt * t * t * p2.x +
-        t * t * t * p3.x,
-      y:
-        mt * mt * mt * p0.y +
-        3 * mt * mt * t * p1.y +
-        3 * mt * t * t * p2.y +
-        t * t * t * p3.y,
-    };
+    const dist = Math.hypot(x3 - x0, y3 - y0);
+    const steps = Math.max(6, Math.ceil(dist / 2));
+    for (let s = 1; s <= steps; s++) {
+      const t = s / steps;
+      const mt = 1 - t;
+      current.push({
+        x: mt * mt * mt * x0 + 3 * mt * mt * t * x1 + 3 * mt * t * t * x2 + t * t * t * x3,
+        y: mt * mt * mt * y0 + 3 * mt * mt * t * y1 + 3 * mt * t * t * y2 + t * t * t * y3,
+      });
+    }
   };
 
-  for (const cmd of commands) {
-    if (cmd.type === "M") {
+  const bezierQ = (
+    x0: number, y0: number, x1: number, y1: number, x2: number, y2: number
+  ) => {
+    const dist = Math.hypot(x2 - x0, y2 - y0);
+    const steps = Math.max(6, Math.ceil(dist / 2));
+    for (let s = 1; s <= steps; s++) {
+      const t = s / steps;
+      const mt = 1 - t;
+      current.push({
+        x: mt * mt * x0 + 2 * mt * t * x1 + t * t * x2,
+        y: mt * mt * y0 + 2 * mt * t * y1 + t * t * y2,
+      });
+    }
+  };
+
+  while (i < tokens.length) {
+    const cmd = tokens[i++];
+    if (cmd === "M" || cmd === "m") {
       if (current.length) polylines.push(current);
-      cx = cmd.x!;
-      cy = cmd.y!;
+      const x = num();
+      const y = num();
+      cx = cmd === "m" ? cx + x : x;
+      cy = cmd === "m" ? cy + y : y;
       current = [{ x: cx, y: cy }];
-    } else if (cmd.type === "L") {
-      cx = cmd.x!;
-      cy = cmd.y!;
+    } else if (cmd === "L" || cmd === "l") {
+      const x = num();
+      const y = num();
+      cx = cmd === "l" ? cx + x : x;
+      cy = cmd === "l" ? cy + y : y;
       current.push({ x: cx, y: cy });
-    } else if (cmd.type === "C") {
-      const p0 = { x: cx, y: cy };
-      const p1 = { x: cmd.x1!, y: cmd.y1! };
-      const p2 = { x: cmd.x2!, y: cmd.y2! };
-      const p3 = { x: cmd.x!, y: cmd.y! };
-      const dist = Math.hypot(p3.x - p0.x, p3.y - p0.y);
-      const steps = Math.max(8, Math.ceil(dist / tolerance));
-      for (let i = 1; i <= steps; i++) {
-        current.push(bezierPoint(p0, p1, p2, p3, i / steps));
-      }
-      cx = p3.x;
-      cy = p3.y;
-    } else if (cmd.type === "Q") {
-      const p0 = { x: cx, y: cy };
-      const p1 = { x: cmd.x1!, y: cmd.y1! };
-      const p2 = { x: cmd.x!, y: cmd.y! };
-      const dist = Math.hypot(p2.x - p0.x, p2.y - p0.y);
-      const steps = Math.max(8, Math.ceil(dist / tolerance));
-      for (let i = 1; i <= steps; i++) {
-        const mt = 1 - i / steps;
-        const t = i / steps;
-        current.push({
-          x: mt * mt * p0.x + 2 * mt * t * p1.x + t * t * p2.x,
-          y: mt * mt * p0.y + 2 * mt * t * p1.y + t * t * p2.y,
-        });
-      }
-      cx = p2.x;
-      cy = p2.y;
-    } else if (cmd.type === "Z") {
+    } else if (cmd === "C" || cmd === "c") {
+      const x1 = num(), y1 = num(), x2 = num(), y2 = num(), x3 = num(), y3 = num();
+      const ax1 = cmd === "c" ? cx + x1 : x1;
+      const ay1 = cmd === "c" ? cy + y1 : y1;
+      const ax2 = cmd === "c" ? cx + x2 : x2;
+      const ay2 = cmd === "c" ? cy + y2 : y2;
+      const ax3 = cmd === "c" ? cx + x3 : x3;
+      const ay3 = cmd === "c" ? cy + y3 : y3;
+      bezierC(cx, cy, ax1, ay1, ax2, ay2, ax3, ay3);
+      cx = ax3;
+      cy = ay3;
+    } else if (cmd === "Q" || cmd === "q") {
+      const x1 = num(), y1 = num(), x2 = num(), y2 = num();
+      const ax1 = cmd === "q" ? cx + x1 : x1;
+      const ay1 = cmd === "q" ? cy + y1 : y1;
+      const ax2 = cmd === "q" ? cx + x2 : x2;
+      const ay2 = cmd === "q" ? cy + y2 : y2;
+      bezierQ(cx, cy, ax1, ay1, ax2, ay2);
+      cx = ax2;
+      cy = ay2;
+    } else if (cmd === "Z" || cmd === "z") {
       if (current.length) {
         current.push({ ...current[0] });
         polylines.push(current);
@@ -104,48 +215,32 @@ function flattenPath(
   return polylines;
 }
 
-/** Generate all text as SVG paths, scaled to target mm width */
+/** Generate vector polylines from text using canvas + tracing */
 export async function textToPolylines(
   opts: VectorOptions
-): Promise<Array<{ x: number; y: number }[]>> {
-  const font = await loadFont(opts.fontUrl);
+): Promise<Polyline[][]> {
+  const canvas = await renderToCanvas(
+    opts.text,
+    opts.font,
+    opts.widthMm,
+    opts.lineSpacing
+  );
 
-  const lines = opts.text.replace(/\r/g, "").split("\n");
-  const fontSize = 400; // internal units
+  const svg = traceCanvas(canvas);
+  const pathData = extractPathData(svg);
 
-  // Build paths per line
-  const linePaths: opentype.Path[] = [];
-  for (const line of lines) {
-    if (!line.trim()) {
-      linePaths.push(new opentype.Path());
-      continue;
-    }
-    const p = font.getPath(line, 0, 0, fontSize, {
-      kerning: true,
-      features: { liga: true, rlig: true },
-    });
-    linePaths.push(p);
+  const allPolylines: Polyline[][] = [];
+  for (const d of pathData) {
+    allPolylines.push(...parsePath(d));
   }
 
-  // Stack vertically with line spacing
-  const lineHeight = fontSize * 1.2;
-  const gap = lineHeight * opts.lineSpacing;
-
-  const allPolylines: Array<{ x: number; y: number }[]> = [];
-  let yOffset = 0;
-
-  for (let i = 0; i < linePaths.length; i++) {
-    const commands = linePaths[i].commands as PathCommand[];
-    const polylines = flattenPath(commands);
-    for (const poly of polylines) {
-      allPolylines.push(
-        poly.map((pt) => ({ x: pt.x, y: pt.y + yOffset }))
-      );
-    }
-    yOffset += lineHeight + gap;
+  if (!allPolylines.length) {
+    throw new Error(
+      "Tracing produced no paths. Check that the font loaded correctly."
+    );
   }
 
-  // Compute bounding box
+  // Compute bbox
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const poly of allPolylines) {
     for (const pt of poly) {
@@ -156,26 +251,20 @@ export async function textToPolylines(
     }
   }
   const w = maxX - minX;
-  const h = maxY - minY;
 
-  // Scale so width == requested mm (use 25.4 units per mm for DXF/SVG consistency)
-  const mmToUnit = (mm: number) => (mm * 100) / 2.54; // 100 units = 1 inch
-  const targetWidthUnits = mmToUnit(opts.widthMm);
+  // Scale so width == requested mm (1 inch = 100 units → 25.4mm = 100)
+  const targetWidthUnits = (opts.widthMm * 100) / 25.4;
   const scale = targetWidthUnits / w;
 
   return allPolylines.map((poly) =>
     poly.map((pt) => ({
       x: (pt.x - minX) * scale,
-      // Flip Y (fonts are Y-down, CAD is Y-up)
-      y: (maxY - pt.y) * scale,
+      y: (maxY - pt.y) * scale, // flip Y for CAD
     }))
   );
 }
 
-/** Convert polylines to a DXF file (AutoCAD R12 ASCII) */
-export function polylinesToDxf(
-  polylines: Array<{ x: number; y: number }[]>
-): string {
+export function polylinesToDxf(polylines: Polyline[][]): string {
   const parts: string[] = [];
   parts.push("0\nSECTION\n2\nENTITIES\n");
 
@@ -191,10 +280,7 @@ export function polylinesToDxf(
   return parts.join("");
 }
 
-/** Convert polylines to SVG path */
-export function polylinesToSvg(
-  polylines: Array<{ x: number; y: number }[]>
-): string {
+export function polylinesToSvg(polylines: Polyline[][]): string {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const poly of polylines) {
     for (const pt of poly) {
