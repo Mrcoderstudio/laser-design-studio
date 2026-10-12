@@ -10,8 +10,13 @@ import {
 import { canvasToPngBlobWithDpi } from "./lib/png";
 import { Preview } from "./components/Preview";
 import { cn } from "./utils/cn";
+import {
+  textToPolylines,
+  polylinesToDxf,
+  polylinesToSvg,
+} from "./lib/vector";
 
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.4.0";
 const PRESETS = [
   { label: "Pen", mm: 25, icon: "🖊️" },
   { label: "Keychain", mm: 40, icon: "🔑" },
@@ -37,6 +42,18 @@ function useDebounced<T>(value: T, ms: number) {
   return v;
 }
 
+/**
+ * Try hard to find a TTF/OTF URL for a font.
+ * - Uses (font as any).url if present
+ * - Falls back to /fonts/<family>.ttf
+ */
+function resolveFontUrl(font: any): string {
+  if (font?.url) return font.url;
+  if (font?.file) return `/fonts/${font.file}`;
+  const family = String(font?.family ?? "NotoNastaliqUrdu").replace(/\s+/g, "");
+  return `/fonts/${family}.ttf`;
+}
+
 export default function App() {
   const [text, setText] = useState("لیزر ڈیزائن");
   const [fontId, setFontId] = useState(DEFAULT_FONT_ID);
@@ -58,6 +75,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [showDiag, setShowDiag] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [vectorLoading, setVectorLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const font = useMemo(
@@ -82,6 +100,7 @@ export default function App() {
   const debouncedSpacing = useDebounced(lineSpacing, 150);
   const debouncedWidth = useDebounced(widthMm, 150);
 
+  // Render preview on every change
   useEffect(() => {
     if (!diag.ready) return;
     try {
@@ -121,6 +140,7 @@ export default function App() {
     direction,
   ]);
 
+  // Download raster PNG
   const download = useCallback(async () => {
     if (!result || downloading) return;
     setDownloading(true);
@@ -128,13 +148,8 @@ export default function App() {
       const blob = await canvasToPngBlobWithDpi(result.canvas, dpi);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      const safe =
-        text
-          .split("\n")[0]
-          .replace(/[^\p{L}\p{N}]+/gu, "_")
-          .slice(0, 30) || "design";
       a.href = url;
-      a.download = `laser_${safe}_${widthMm}mm_${dpi}dpi.png`;
+      a.download = `laser_design_${widthMm}mm_${dpi}dpi.png`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (e) {
@@ -142,7 +157,52 @@ export default function App() {
     } finally {
       setDownloading(false);
     }
-  }, [result, dpi, text, widthMm, downloading]);
+  }, [result, dpi, widthMm, downloading]);
+
+  // Download vector DXF or SVG
+  const downloadVector = useCallback(
+    async (format: "dxf" | "svg") => {
+      if (vectorLoading) return;
+      setVectorLoading(true);
+      setError(null);
+      try {
+        const fontUrl = resolveFontUrl(font);
+        const polylines = await textToPolylines({
+          text,
+          font,
+          fontUrl,
+          widthMm: Math.min(150, Math.max(1, widthMm)),
+          lineSpacing,
+        });
+
+        if (!polylines.length) {
+          throw new Error(
+            "No vector paths generated. Check the font file exists in /fonts/."
+          );
+        }
+
+        const content =
+          format === "dxf"
+            ? polylinesToDxf(polylines)
+            : polylinesToSvg(polylines);
+
+        const mime =
+          format === "dxf" ? "application/dxf" : "image/svg+xml";
+        const blob = new Blob([content], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `laser_design_${widthMm}mm.${format}`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Vector export failed.");
+      } finally {
+        setVectorLoading(false);
+      }
+    },
+    [text, font, widthMm, lineSpacing, vectorLoading]
+  );
 
   const copyText = useCallback(async () => {
     try {
@@ -170,6 +230,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-[Inter,system-ui,sans-serif] antialiased">
+      {/* Header */}
       <header className="border-b border-zinc-800/80 bg-zinc-950/85 backdrop-blur sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-5 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -191,7 +252,7 @@ export default function App() {
                 Laser Design Studio
               </h1>
               <p className="text-[11px] text-zinc-500 leading-tight">
-                Urdu / English → EZCAD2-ready PNG · 1064nm fiber
+                Urdu / English → EZCAD2 PNG &amp; DXF · 1064nm fiber
               </p>
             </div>
           </div>
@@ -214,6 +275,7 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-5 py-6 grid lg:grid-cols-[420px_1fr] gap-6">
+        {/* Controls */}
         <section className="space-y-5">
           {/* Text */}
           <Card
@@ -229,7 +291,7 @@ export default function App() {
                 placeholder="Type Urdu or English…  (multi-line supported)"
                 style={{
                   fontFamily: `"${font.family}", sans-serif`,
-                  fontWeight: font.weight,
+                  fontWeight: (font as any).weight,
                 }}
                 className={cn(
                   "w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 pl-9 text-xl leading-loose outline-none focus:border-amber-500/70 focus:ring-2 focus:ring-amber-500/20 resize-y transition",
@@ -290,7 +352,10 @@ export default function App() {
                   </div>
                   <div
                     dir={f.lang === "ur" ? "rtl" : "ltr"}
-                    style={{ fontFamily: `"${f.family}"`, fontWeight: f.weight }}
+                    style={{
+                      fontFamily: `"${f.family}"`,
+                      fontWeight: (f as any).weight,
+                    }}
                     className={cn(
                       "text-lg leading-relaxed truncate",
                       f.lang === "ur" ? "text-right" : "text-left"
@@ -391,7 +456,7 @@ export default function App() {
 
           {/* Options */}
           <Card title="Options">
-            {/* Text Color */}
+            {/* Text color */}
             <div className="mb-3 pb-3 border-b border-zinc-800">
               <div className="text-xs text-zinc-500 mb-2">Text color</div>
               <div className="grid grid-cols-2 gap-2">
@@ -419,7 +484,7 @@ export default function App() {
                 >
                   <span className="w-3 h-3 rounded-full bg-black border border-zinc-600" />
                   Black
-                  <span className="text-[10px] text-zinc-500">view</span>
+                  <span className="text-[10px] text-zinc-500">machine</span>
                 </button>
               </div>
             </div>
@@ -438,7 +503,7 @@ export default function App() {
             />
 
             <div className="mt-2 pt-3 border-t border-zinc-800">
-              <div className="text-xs text-zinc-500 mb-2">Edge mode</div>
+              <div className="text-xs text-zinc-500 mb-2">Edge mode (PNG only)</div>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => setEdgeMode("solid")}
@@ -475,12 +540,12 @@ export default function App() {
           {invert && (
             <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-300 px-4 py-3 text-xs leading-relaxed">
               <strong className="font-semibold">⚠ White background ON.</strong>{" "}
-              Ye sirf screen pe dekhne ke liye hai — laser ke liye OFF karo,
-              phir download karo.
+              Sirf dekhne ke liye hai. Laser export ke liye <b>OFF</b> karo.
             </div>
           )}
         </section>
 
+        {/* Preview */}
         <section className="space-y-4">
           <Preview result={result} />
 
@@ -490,6 +555,7 @@ export default function App() {
             </div>
           )}
 
+          {/* Download buttons */}
           <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={download}
@@ -522,6 +588,47 @@ export default function App() {
               )}
               {downloading ? "Preparing…" : "Download PNG"}
             </button>
+
+            <button
+              onClick={() => downloadVector("dxf")}
+              disabled={vectorLoading}
+              className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-emerald-400 to-teal-500 text-zinc-950 font-semibold px-5 py-3 shadow-lg shadow-emerald-500/20 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            >
+              {vectorLoading ? (
+                <svg
+                  viewBox="0 0 24 24"
+                  className="w-5 h-5 animate-spin"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                >
+                  <path d="M21 12a9 9 0 11-6.22-8.56" />
+                </svg>
+              ) : (
+                <svg
+                  viewBox="0 0 24 24"
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+                </svg>
+              )}
+              {vectorLoading ? "Building…" : "Download DXF (vector)"}
+            </button>
+
+            <button
+              onClick={() => downloadVector("svg")}
+              disabled={vectorLoading}
+              className="inline-flex items-center gap-2 rounded-lg bg-zinc-800 text-zinc-100 border border-zinc-700 font-semibold px-4 py-3 hover:border-zinc-500 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            >
+              SVG
+            </button>
+
             {result && (
               <div className="text-xs text-zinc-400 font-mono space-x-3">
                 <span>
@@ -532,41 +639,40 @@ export default function App() {
                   {result.widthMm.toFixed(2)}×{result.heightMm.toFixed(2)} mm
                 </span>
                 <span className="uppercase">{result.direction}</span>
-                <span className="uppercase text-amber-300">
-                  {textColor}
-                </span>
+                <span className="uppercase text-amber-300">{textColor}</span>
               </div>
             )}
           </div>
 
+          {/* Workflow card */}
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 text-sm text-zinc-400 space-y-1.5">
             <div className="text-zinc-200 font-semibold text-xs uppercase tracking-wider mb-2">
               EZCAD2 workflow
             </div>
             <p>
-              1. <span className="text-amber-300">White background OFF</span>{" "}
-              rakho, phir Download PNG → EZCAD2 mein{" "}
-              <span className="text-zinc-200">Draw → Bitmap File</span> se open
-              karo.
+              <b className="text-zinc-200">Vector (recommended):</b> Download{" "}
+              <span className="text-emerald-300">DXF</span> → EZCAD2 →{" "}
+              <span className="text-zinc-200">File → Import</span> (or open DXF)
+              → apply Hatch. Fast, crisp, resolution-independent.
             </p>
             <p>
-              2. Agar aapki machine <span className="text-amber-300">white</span>{" "}
-              mark karti hai → Text color{" "}
-              <span className="text-zinc-200">White</span> rakho.
+              <b className="text-zinc-200">Raster:</b> Download PNG → EZCAD2 →{" "}
+              <span className="text-zinc-200">Draw → Bitmap File</span>.
             </p>
             <p>
-              3. Agar aapki machine <span className="text-amber-300">black</span>{" "}
-              mark karti hai → Text color{" "}
-              <span className="text-zinc-200">Black</span> rakho.
+              1. Machine <span className="text-amber-300">black</span> mark
+              karti hai → Text color <b>Black</b>, White bg <b>OFF</b>.
             </p>
             <p>
-              4. Sirf dekhne/print ke liye Text color Black + White background ON
-              karo.
+              2. Machine <span className="text-amber-300">white</span> mark
+              karti hai → Text color <b>White</b>, White bg <b>OFF</b>.
             </p>
+            <p>3. Sirf screen pe check karne ke liye White bg ON karo.</p>
           </div>
         </section>
       </main>
 
+      {/* Footer diag */}
       <footer className="max-w-7xl mx-auto px-5 pb-6">
         <button
           onClick={() => setShowDiag((s) => !s)}
@@ -600,10 +706,7 @@ export default function App() {
                 fonts: diag.fonts,
                 user_agent: navigator.userAgent,
                 field_mm: 150,
-                output:
-                  textColor === "white"
-                    ? "WHITE text, transparent background (laser-ready)"
-                    : "BLACK text, transparent background",
+                exports: ["PNG (raster)", "DXF (vector)", "SVG (vector)"],
               },
               null,
               2
