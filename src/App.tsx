@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_FONT_ID, FONTS, ensureFontsLoaded } from "./lib/fonts";
 import {
   RenderResult,
@@ -16,7 +16,7 @@ import {
   polylinesToSvg,
 } from "./lib/vector";
 
-const APP_VERSION = "1.4.0";
+const APP_VERSION = "1.5.0";
 const PRESETS = [
   { label: "Pen", mm: 25, icon: "🖊️" },
   { label: "Keychain", mm: 40, icon: "🔑" },
@@ -42,16 +42,20 @@ function useDebounced<T>(value: T, ms: number) {
   return v;
 }
 
-/**
- * Try hard to find a TTF/OTF URL for a font.
- * - Uses (font as any).url if present
- * - Falls back to /fonts/<family>.ttf
- */
 function resolveFontUrl(font: any): string {
   if (font?.url) return font.url;
   if (font?.file) return `/fonts/${font.file}`;
   const family = String(font?.family ?? "NotoNastaliqUrdu").replace(/\s+/g, "");
   return `/fonts/${family}.ttf`;
+}
+
+/** Detects browser support for the Web Speech API */
+function speechSupported(): boolean {
+  if (typeof window === "undefined") return false;
+  const SR =
+    (window as any).SpeechRecognition ||
+    (window as any).webkitSpeechRecognition;
+  return !!SR;
 }
 
 export default function App() {
@@ -78,6 +82,12 @@ export default function App() {
   const [vectorLoading, setVectorLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // ------- VOICE STATE -------
+  const [isListening, setIsListening] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  // ---------------------------
+
   const font = useMemo(
     () => FONTS.find((f) => f.id === fontId) ?? FONTS[0],
     [fontId]
@@ -94,13 +104,101 @@ export default function App() {
         ready: true,
       });
     });
+    setVoiceSupported(speechSupported());
   }, []);
 
   const debouncedText = useDebounced(text, 250);
   const debouncedSpacing = useDebounced(lineSpacing, 150);
   const debouncedWidth = useDebounced(widthMm, 150);
 
-  // Render preview on every change
+  // -------- VOICE HANDLERS --------
+  const startListening = useCallback(() => {
+    if (!voiceSupported) {
+      setError(
+        "Voice input aapke browser mein support nahi hai. Chrome ya Edge use karein."
+      );
+      return;
+    }
+    const SR =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+    const rec = new SR();
+    // Detect language: Urdu if text has Arabic chars OR user is on default
+    const isUrduContext = /[\u0590-\u08ff]/.test(text) || direction === "rtl";
+    rec.lang = isUrduContext ? "ur-PK" : "en-US";
+    rec.continuous = false;
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+
+    let finalText = "";
+
+    rec.onresult = (event: any) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalText += transcript;
+        } else {
+          interim += transcript;
+        }
+      }
+      // Show live as user speaks
+      setText((prev) => {
+        // Remove previous interim if we tracked it — simpler: append final + interim
+        return finalText || interim || prev;
+      });
+    };
+
+    rec.onerror = (e: any) => {
+      setIsListening(false);
+      if (e.error === "not-allowed") {
+        setError("Mic permission denied. Browser settings mein allow karein.");
+      } else if (e.error === "no-speech") {
+        setError("Kuch suna nahi gaya. Dobara try karein.");
+      } else {
+        setError("Voice error: " + e.error);
+      }
+    };
+
+    rec.onend = () => {
+      setIsListening(false);
+    };
+
+    recognitionRef.current = rec;
+    try {
+      rec.start();
+      setIsListening(true);
+      setError(null);
+    } catch (e) {
+      setError("Voice start nahi ho saka. Dobara try karein.");
+    }
+  }, [voiceSupported, text, direction]);
+
+  const stopListening = useCallback(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+    setIsListening(false);
+  }, []);
+
+  const toggleVoice = useCallback(() => {
+    if (isListening) stopListening();
+    else startListening();
+  }, [isListening, startListening, stopListening]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
+      }
+    };
+  }, []);
+  // --------------------------------
+
   useEffect(() => {
     if (!diag.ready) return;
     try {
@@ -140,7 +238,6 @@ export default function App() {
     direction,
   ]);
 
-  // Download raster PNG
   const download = useCallback(async () => {
     if (!result || downloading) return;
     setDownloading(true);
@@ -159,7 +256,6 @@ export default function App() {
     }
   }, [result, dpi, widthMm, downloading]);
 
-  // Download vector DXF or SVG
   const downloadVector = useCallback(
     async (format: "dxf" | "svg") => {
       if (vectorLoading) return;
@@ -230,7 +326,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-[Inter,system-ui,sans-serif] antialiased">
-      {/* Header */}
       <header className="border-b border-zinc-800/80 bg-zinc-950/85 backdrop-blur sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-5 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -275,9 +370,8 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-5 py-6 grid lg:grid-cols-[420px_1fr] gap-6">
-        {/* Controls */}
         <section className="space-y-5">
-          {/* Text */}
+          {/* Text + Voice */}
           <Card
             title="Text"
             hint={direction === "rtl" ? "RTL · Urdu" : "LTR · English"}
@@ -288,16 +382,18 @@ export default function App() {
                 onChange={(e) => setText(e.target.value)}
                 dir={direction}
                 rows={3}
-                placeholder="Type Urdu or English…  (multi-line supported)"
+                placeholder="Type Urdu or English…  (mic button se bol kar likhein)"
                 style={{
                   fontFamily: `"${font.family}", sans-serif`,
                   fontWeight: (font as any).weight,
                 }}
                 className={cn(
-                  "w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 pl-9 text-xl leading-loose outline-none focus:border-amber-500/70 focus:ring-2 focus:ring-amber-500/20 resize-y transition",
+                  "w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 pl-9 pr-12 text-xl leading-loose outline-none focus:border-amber-500/70 focus:ring-2 focus:ring-amber-500/20 resize-y transition",
                   direction === "rtl" ? "text-right" : "text-left"
                 )}
               />
+
+              {/* Copy button (top-left) */}
               <button
                 onClick={copyText}
                 title="Copy text"
@@ -330,10 +426,55 @@ export default function App() {
                   </svg>
                 )}
               </button>
+
+              {/* Voice (mic) button — WhatsApp style, bottom-right */}
+              {voiceSupported && (
+                <button
+                  onClick={toggleVoice}
+                  title={isListening ? "Stop recording" : "Bol kar likhein"}
+                  className={cn(
+                    "absolute bottom-2 right-2 w-9 h-9 rounded-full grid place-items-center transition shadow-lg",
+                    isListening
+                      ? "bg-red-500 text-white animate-pulse shadow-red-500/40"
+                      : "bg-emerald-500 text-white hover:bg-emerald-400 shadow-emerald-500/30"
+                  )}
+                >
+                  {isListening ? (
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="w-5 h-5"
+                      fill="currentColor"
+                    >
+                      <rect x="6" y="6" width="12" height="12" rx="2" />
+                    </svg>
+                  ) : (
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <rect x="9" y="2" width="6" height="12" rx="3" />
+                      <path d="M5 10a7 7 0 0014 0" />
+                      <path d="M12 17v4M8 21h8" />
+                    </svg>
+                  )}
+                </button>
+              )}
+
+              {/* Live recording indicator */}
+              {isListening && (
+                <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-0.5 bg-red-500/20 border border-red-500/40 rounded-full text-[10px] text-red-300 font-mono">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                  REC
+                </div>
+              )}
             </div>
           </Card>
 
-          {/* Font */}
           <Card title="Font" hint={`${FONTS.length} available`}>
             <div className="grid grid-cols-2 gap-2">
               {FONTS.map((f) => (
@@ -368,7 +509,6 @@ export default function App() {
             </div>
           </Card>
 
-          {/* Size */}
           <Card title="Width" hint={`${widthMm} mm`}>
             <div className="flex gap-2 mb-3">
               {PRESETS.map((p) => (
@@ -412,7 +552,6 @@ export default function App() {
             </div>
           </Card>
 
-          {/* DPI + spacing */}
           <Card title="Resolution & Spacing">
             <div className="mb-4">
               <div className="text-xs text-zinc-500 mb-1.5">
@@ -454,9 +593,7 @@ export default function App() {
             </div>
           </Card>
 
-          {/* Options */}
           <Card title="Options">
-            {/* Text color */}
             <div className="mb-3 pb-3 border-b border-zinc-800">
               <div className="text-xs text-zinc-500 mb-2">Text color</div>
               <div className="grid grid-cols-2 gap-2">
@@ -503,7 +640,9 @@ export default function App() {
             />
 
             <div className="mt-2 pt-3 border-t border-zinc-800">
-              <div className="text-xs text-zinc-500 mb-2">Edge mode (PNG only)</div>
+              <div className="text-xs text-zinc-500 mb-2">
+                Edge mode (PNG only)
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => setEdgeMode("solid")}
@@ -539,13 +678,14 @@ export default function App() {
 
           {invert && (
             <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-300 px-4 py-3 text-xs leading-relaxed">
-              <strong className="font-semibold">⚠ White background ON.</strong>{" "}
+              <strong className="font-semibold">
+                ⚠ White background ON.
+              </strong>{" "}
               Sirf dekhne ke liye hai. Laser export ke liye <b>OFF</b> karo.
             </div>
           )}
         </section>
 
-        {/* Preview */}
         <section className="space-y-4">
           <Preview result={result} />
 
@@ -555,7 +695,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Download buttons */}
           <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={download}
@@ -644,7 +783,6 @@ export default function App() {
             )}
           </div>
 
-          {/* Workflow card */}
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 text-sm text-zinc-400 space-y-1.5">
             <div className="text-zinc-200 font-semibold text-xs uppercase tracking-wider mb-2">
               EZCAD2 workflow
@@ -652,8 +790,8 @@ export default function App() {
             <p>
               <b className="text-zinc-200">Vector (recommended):</b> Download{" "}
               <span className="text-emerald-300">DXF</span> → EZCAD2 →{" "}
-              <span className="text-zinc-200">File → Import</span> (or open DXF)
-              → apply Hatch. Fast, crisp, resolution-independent.
+              <span className="text-zinc-200">File → Import</span> → apply Hatch
+              (Angle 45°, Line Distance 0.02mm).
             </p>
             <p>
               <b className="text-zinc-200">Raster:</b> Download PNG → EZCAD2 →{" "}
@@ -672,7 +810,6 @@ export default function App() {
         </section>
       </main>
 
-      {/* Footer diag */}
       <footer className="max-w-7xl mx-auto px-5 pb-6">
         <button
           onClick={() => setShowDiag((s) => !s)}
@@ -690,7 +827,8 @@ export default function App() {
           />
           v{diag.version} · {diag.engine.split(" ")[0]} · shaping:{" "}
           {!diag.ready ? "checking…" : diag.shaping ? "OK" : "MISSING"} · fonts{" "}
-          {fontsOk}/{FONTS.length}
+          {fontsOk}/{FONTS.length} · voice:{" "}
+          {voiceSupported ? "OK" : "N/A"}
         </button>
         {showDiag && (
           <pre className="mt-2 text-[11px] font-mono text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-lg p-3 overflow-auto">
@@ -700,6 +838,7 @@ export default function App() {
                 version: diag.version,
                 render_engine: diag.engine,
                 raqm_equivalent_shaping: diag.shaping,
+                voice_supported: voiceSupported,
                 edge_mode: edgeMode,
                 text_color: textColor,
                 white_background: invert,

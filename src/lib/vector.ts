@@ -15,35 +15,32 @@ interface Polyline {
 }
 
 /**
- * Rasterize text to a high-res canvas using the browser's native shaper
- * (HarfBuzz handles Urdu Nastaliq perfectly), then trace to vector paths.
+ * Render text as BLACK text on WHITE background.
+ * ImageTracer needs solid pixels — transparent bg fails.
  */
 async function renderToCanvas(
   text: string,
   font: FontDef,
-  widthMm: number,
   lineSpacing: number
 ): Promise<HTMLCanvasElement> {
   const fontFamily = font.family;
   const weight = font.weight;
 
-  // Make sure font is available in document
   try {
-    await document.fonts.load(`${weight} 400px "${fontFamily}"`, "اب");
+    await document.fonts.load(`${weight} 300px "${fontFamily}"`, "اب");
   } catch {
     /* ignore */
   }
 
   const lines = text.replace(/\r/g, "").split("\n");
-  const FONT_PX = 400;
+  const FONT_PX = 300;
 
-  // Measurement canvas
   const measure = document.createElement("canvas");
   const mctx = measure.getContext("2d")!;
   mctx.font = `${weight} ${FONT_PX}px "${fontFamily}"`;
-  mctx.direction = /[\u0590-\u08ff]/.test(text) ? "rtl" : "ltr";
+  const isRtl = /[\u0590-\u08ff]/.test(text);
+  mctx.direction = isRtl ? "rtl" : "ltr";
 
-  // Find widest line
   let maxW = 0;
   for (const line of lines) {
     const w = mctx.measureText(line).width;
@@ -60,36 +57,38 @@ async function renderToCanvas(
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.ceil(totalW));
   canvas.height = Math.max(1, Math.ceil(totalH));
-  const ctx = canvas.getContext("2d", { alpha: true })!;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const ctx = canvas.getContext("2d", { alpha: false })!;
+
+  // WHITE background — critical for ImageTracer
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // BLACK text
   ctx.font = `${weight} ${FONT_PX}px "${fontFamily}"`;
-  ctx.fillStyle = "#000000"; // solid black text for tracing
+  ctx.fillStyle = "#000000";
   ctx.textBaseline = "top";
-  ctx.direction = mctx.direction;
-  ctx.textAlign = mctx.direction === "rtl" ? "right" : "left";
+  ctx.direction = isRtl ? "rtl" : "ltr";
+  ctx.textAlign = isRtl ? "right" : "left";
 
-  const x = mctx.direction === "rtl" ? canvas.width - pad : pad;
+  const x = isRtl ? canvas.width - pad : pad;
   let y = pad;
-
   for (const line of lines) {
-    if (line.trim()) {
-      ctx.fillText(line, x, y);
-    }
+    if (line.trim()) ctx.fillText(line, x, y);
     y += lineHeight + gap;
   }
 
   return canvas;
 }
 
-/** Convert canvas to SVG path strings using ImageTracer */
+/** Trace the canvas to SVG paths using ImageTracer */
 function traceCanvas(canvas: HTMLCanvasElement): string {
   const ctx = canvas.getContext("2d")!;
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-  const svg = ImageTracer.imagedataToSVG(imageData, {
+  return ImageTracer.imagedataToSVG(imageData, {
     ltres: 0.5,
     qtres: 0.5,
-    pathomit: 4,
+    pathomit: 8,
     rightangleenhance: false,
     colorsampling: 0,
     numberofcolors: 2,
@@ -97,35 +96,53 @@ function traceCanvas(canvas: HTMLCanvasElement): string {
     colorquantcycles: 1,
     layering: 0,
     strokewidth: 0,
-    linefilter: false,
+    linefilter: true,
     scale: 1,
     roundcoords: 2,
-    viewbox: false,
+    viewbox: true,
     desc: false,
     lcpr: 0,
     qcpr: 0,
-    blurradius: 0,
-    blurdelta: 20,
   });
-
-  return svg;
 }
 
-/** Extract path `d` attributes from an SVG string */
-function extractPathData(svg: string): string[] {
+/**
+ * Extract only the TEXT paths from SVG.
+ * Filters out the giant background path.
+ */
+function extractTextPathData(
+  svg: string,
+  imgW: number,
+  imgH: number
+): string[] {
   const paths: string[] = [];
   const re = /<path[^>]*\sd="([^"]+)"/g;
+  const imgArea = imgW * imgH;
   let m: RegExpExecArray | null;
+
   while ((m = re.exec(svg)) !== null) {
-    paths.push(m[1]);
+    const d = m[1];
+    const nums = d.match(/-?\d*\.?\d+/g)?.map(Number) || [];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let i = 0; i + 1 < nums.length; i += 2) {
+      const x = nums[i];
+      const y = nums[i + 1];
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    if (!isFinite(minX)) continue;
+    const area = (maxX - minX) * (maxY - minY);
+    // Skip background (covers >85% of image)
+    if (area / imgArea < 0.85) {
+      paths.push(d);
+    }
   }
   return paths;
 }
 
-/**
- * Very small SVG path parser — supports M, L, C, Q, Z with absolute coords.
- * ImageTracer outputs this subset.
- */
+/** Parse SVG path d attribute into polylines */
 function parsePath(d: string): Polyline[][] {
   const polylines: Polyline[][] = [];
   let current: Polyline[] = [];
@@ -134,36 +151,35 @@ function parsePath(d: string): Polyline[][] {
 
   const tokens = d.match(/[MLCQZmlcqz]|-?\d*\.?\d+/g) || [];
   let i = 0;
-
   const num = () => parseFloat(tokens[i++]);
 
-  const bezierC = (
+  const addC = (
     x0: number, y0: number, x1: number, y1: number,
     x2: number, y2: number, x3: number, y3: number
   ) => {
     const dist = Math.hypot(x3 - x0, y3 - y0);
-    const steps = Math.max(6, Math.ceil(dist / 2));
+    const steps = Math.max(6, Math.ceil(dist / 1.5));
     for (let s = 1; s <= steps; s++) {
       const t = s / steps;
       const mt = 1 - t;
       current.push({
-        x: mt * mt * mt * x0 + 3 * mt * mt * t * x1 + 3 * mt * t * t * x2 + t * t * t * x3,
-        y: mt * mt * mt * y0 + 3 * mt * mt * t * y1 + 3 * mt * t * t * y2 + t * t * t * y3,
+        x: mt*mt*mt*x0 + 3*mt*mt*t*x1 + 3*mt*t*t*x2 + t*t*t*x3,
+        y: mt*mt*mt*y0 + 3*mt*mt*t*y1 + 3*mt*t*t*y2 + t*t*t*y3,
       });
     }
   };
 
-  const bezierQ = (
+  const addQ = (
     x0: number, y0: number, x1: number, y1: number, x2: number, y2: number
   ) => {
     const dist = Math.hypot(x2 - x0, y2 - y0);
-    const steps = Math.max(6, Math.ceil(dist / 2));
+    const steps = Math.max(6, Math.ceil(dist / 1.5));
     for (let s = 1; s <= steps; s++) {
       const t = s / steps;
       const mt = 1 - t;
       current.push({
-        x: mt * mt * x0 + 2 * mt * t * x1 + t * t * x2,
-        y: mt * mt * y0 + 2 * mt * t * y1 + t * t * y2,
+        x: mt*mt*x0 + 2*mt*t*x1 + t*t*x2,
+        y: mt*mt*y0 + 2*mt*t*y1 + t*t*y2,
       });
     }
   };
@@ -172,14 +188,12 @@ function parsePath(d: string): Polyline[][] {
     const cmd = tokens[i++];
     if (cmd === "M" || cmd === "m") {
       if (current.length) polylines.push(current);
-      const x = num();
-      const y = num();
+      const x = num(), y = num();
       cx = cmd === "m" ? cx + x : x;
       cy = cmd === "m" ? cy + y : y;
       current = [{ x: cx, y: cy }];
     } else if (cmd === "L" || cmd === "l") {
-      const x = num();
-      const y = num();
+      const x = num(), y = num();
       cx = cmd === "l" ? cx + x : x;
       cy = cmd === "l" ? cy + y : y;
       current.push({ x: cx, y: cy });
@@ -191,18 +205,16 @@ function parsePath(d: string): Polyline[][] {
       const ay2 = cmd === "c" ? cy + y2 : y2;
       const ax3 = cmd === "c" ? cx + x3 : x3;
       const ay3 = cmd === "c" ? cy + y3 : y3;
-      bezierC(cx, cy, ax1, ay1, ax2, ay2, ax3, ay3);
-      cx = ax3;
-      cy = ay3;
+      addC(cx, cy, ax1, ay1, ax2, ay2, ax3, ay3);
+      cx = ax3; cy = ay3;
     } else if (cmd === "Q" || cmd === "q") {
       const x1 = num(), y1 = num(), x2 = num(), y2 = num();
       const ax1 = cmd === "q" ? cx + x1 : x1;
       const ay1 = cmd === "q" ? cy + y1 : y1;
       const ax2 = cmd === "q" ? cx + x2 : x2;
       const ay2 = cmd === "q" ? cy + y2 : y2;
-      bezierQ(cx, cy, ax1, ay1, ax2, ay2);
-      cx = ax2;
-      cy = ay2;
+      addQ(cx, cy, ax1, ay1, ax2, ay2);
+      cx = ax2; cy = ay2;
     } else if (cmd === "Z" || cmd === "z") {
       if (current.length) {
         current.push({ ...current[0] });
@@ -215,19 +227,13 @@ function parsePath(d: string): Polyline[][] {
   return polylines;
 }
 
-/** Generate vector polylines from text using canvas + tracing */
+/** Main: text → polylines in millimetres */
 export async function textToPolylines(
   opts: VectorOptions
 ): Promise<Polyline[][]> {
-  const canvas = await renderToCanvas(
-    opts.text,
-    opts.font,
-    opts.widthMm,
-    opts.lineSpacing
-  );
-
+  const canvas = await renderToCanvas(opts.text, opts.font, opts.lineSpacing);
   const svg = traceCanvas(canvas);
-  const pathData = extractPathData(svg);
+  const pathData = extractTextPathData(svg, canvas.width, canvas.height);
 
   const allPolylines: Polyline[][] = [];
   for (const d of pathData) {
@@ -235,26 +241,23 @@ export async function textToPolylines(
   }
 
   if (!allPolylines.length) {
-    throw new Error(
-      "Tracing produced no paths. Check that the font loaded correctly."
-    );
+    throw new Error("Tracing produced no paths. Try a different font.");
   }
 
-  // Compute bbox
+  // Bounding box in canvas pixels
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const poly of allPolylines) {
     for (const pt of poly) {
       if (pt.x < minX) minX = pt.x;
-      if (pt.y < minY) minY = pt.y;
       if (pt.x > maxX) maxX = pt.x;
+      if (pt.y < minY) minY = pt.y;
       if (pt.y > maxY) maxY = pt.y;
     }
   }
   const w = maxX - minX;
 
-  // Scale so width == requested mm (1 inch = 100 units → 25.4mm = 100)
-  const targetWidthUnits = (opts.widthMm * 100) / 25.4;
-  const scale = targetWidthUnits / w;
+  // Scale pixels → mm
+  const scale = opts.widthMm / w;
 
   return allPolylines.map((poly) =>
     poly.map((pt) => ({
@@ -264,15 +267,20 @@ export async function textToPolylines(
   );
 }
 
+/** DXF using LINE entities (widest compatibility with EZCAD2) */
 export function polylinesToDxf(polylines: Polyline[][]): string {
   const parts: string[] = [];
   parts.push("0\nSECTION\n2\nENTITIES\n");
 
   for (const poly of polylines) {
-    if (poly.length < 2) continue;
-    parts.push("0\nLWPOLYLINE\n8\n0\n90\n" + poly.length + "\n70\n0\n");
-    for (const pt of poly) {
-      parts.push(`10\n${pt.x.toFixed(4)}\n20\n${pt.y.toFixed(4)}\n`);
+    for (let i = 0; i < poly.length - 1; i++) {
+      const p1 = poly[i];
+      const p2 = poly[i + 1];
+      parts.push(
+        "0\nLINE\n8\n0\n" +
+          `10\n${p1.x.toFixed(4)}\n20\n${p1.y.toFixed(4)}\n30\n0.0\n` +
+          `11\n${p2.x.toFixed(4)}\n21\n${p2.y.toFixed(4)}\n31\n0.0\n`
+      );
     }
   }
 
@@ -296,12 +304,12 @@ export function polylinesToSvg(polylines: Polyline[][]): string {
   let d = "";
   for (const poly of polylines) {
     poly.forEach((pt, i) => {
-      d += (i === 0 ? "M" : "L") + pt.x.toFixed(2) + "," + pt.y.toFixed(2) + " ";
+      d += (i === 0 ? "M" : "L") + pt.x.toFixed(3) + "," + pt.y.toFixed(3) + " ";
     });
     d += "Z ";
   }
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${w} ${h}" width="${w}" height="${h}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${w} ${h}" width="${w}mm" height="${h}mm">
   <path d="${d}" fill="black" fill-rule="evenodd"/>
 </svg>`;
 }
