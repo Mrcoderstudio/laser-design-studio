@@ -15,7 +15,7 @@ import {
   polylinesToSvg,
 } from "./lib/vector";
 
-const APP_VERSION = "3.3.0";
+const APP_VERSION = "3.4.0";
 const PRESETS = [
   { label: "Pen", mm: 25, icon: "🖊️" },
   { label: "Keychain", mm: 40, icon: "🔑" },
@@ -59,54 +59,27 @@ function speechSupported(): boolean {
 }
 
 /* ============================================================
-   LOGO
+   LOGO — uses the real logo.png from /public
    ============================================================ */
-function UsmanLogo({ size = 44 }: { size?: number }) {
+function UsmanLogo({
+  size = 44,
+  className = "",
+}: {
+  size?: number;
+  className?: string;
+}) {
   return (
-    <svg
-      viewBox="0 0 120 120"
+    <img
+      src="/logo.png"
+      alt="Usman Laser Solutions"
       width={size}
       height={size}
-      className="drop-shadow-[0_0_14px_rgba(227,6,19,0.55)]"
-    >
-      <defs>
-        <linearGradient id="uSilver" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#ffffff" />
-          <stop offset="45%" stopColor="#c9cdd3" />
-          <stop offset="70%" stopColor="#7c8289" />
-          <stop offset="100%" stopColor="#e6e8ec" />
-        </linearGradient>
-        <linearGradient id="uRed" x1="0" y1="1" x2="1" y2="0">
-          <stop offset="0%" stopColor="#8b0009" />
-          <stop offset="50%" stopColor="#e30613" />
-          <stop offset="100%" stopColor="#ff2a36" />
-        </linearGradient>
-        <radialGradient id="spark" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="#ffffff" />
-          <stop offset="40%" stopColor="#ff5964" />
-          <stop offset="100%" stopColor="#e30613" stopOpacity="0" />
-        </radialGradient>
-      </defs>
-
-      <path
-        d="M 20 15 L 20 70 Q 20 100 50 100 Q 80 100 80 70 L 80 15 L 62 15 L 62 68 Q 62 82 50 82 Q 38 82 38 68 L 38 15 Z"
-        fill="url(#uSilver)"
-        stroke="#1a1a1a"
-        strokeWidth="0.5"
-      />
-      <path d="M 46 78 L 100 20 L 100 55 L 68 82 Z" fill="url(#uRed)" />
-      <g transform="translate(98,22)">
-        <circle r="16" fill="url(#spark)" opacity="0.75" />
-        <path
-          d="M 0 -14 L 2 -3 L 13 -1 L 2 1 L 0 12 L -2 1 L -13 -1 L -2 -3 Z"
-          fill="#ffffff"
-        />
-        <path
-          d="M 0 -8 L 1 -2 L 7 -1 L 1 0 L 0 6 L -1 0 L -7 -1 L -1 -2 Z"
-          fill="#e30613"
-        />
-      </g>
-    </svg>
+      className={cn(
+        "object-contain drop-shadow-[0_0_14px_rgba(227,6,19,0.55)]",
+        className
+      )}
+      style={{ width: size, height: size }}
+    />
   );
 }
 
@@ -134,6 +107,7 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
         phase >= 4 ? "opacity-0 pointer-events-none" : "opacity-100"
       )}
     >
+      {/* Ambient red glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] bg-red-600/20 rounded-full blur-[140px] animate-pulse" />
         <div
@@ -142,6 +116,7 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
         />
       </div>
 
+      {/* Grid pattern */}
       <div
         className="absolute inset-0 opacity-[0.04]"
         style={{
@@ -151,6 +126,7 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
         }}
       />
 
+      {/* Red laser beam sweep */}
       {phase >= 3 && (
         <div
           className="absolute inset-0 pointer-events-none"
@@ -167,62 +143,34 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
           0%   { transform: translateX(-100%); }
           100% { transform: translateX(100%); }
         }
-        @keyframes sparkPulse {
-          0%, 100% { transform: scale(1); opacity: 1; }
-          50%      { transform: scale(1.15); opacity: 0.85; }
+        @keyframes logoPulse {
+          0%, 100% { transform: scale(1); filter: drop-shadow(0 0 24px rgba(227,6,19,0.5)); }
+          50%      { transform: scale(1.03); filter: drop-shadow(0 0 40px rgba(227,6,19,0.85)); }
         }
       `}</style>
 
       <div className="relative text-center px-6">
+        {/* Logo image */}
         <div
           className={cn(
-            "mx-auto mb-8 transition-all duration-700",
+            "mx-auto mb-4 transition-all duration-700",
             phase >= 1 ? "opacity-100 scale-100" : "opacity-0 scale-50"
           )}
           style={{
             animation:
-              phase >= 2 ? "sparkPulse 2s ease-in-out infinite" : undefined,
+              phase >= 2 ? "logoPulse 2.4s ease-in-out infinite" : undefined,
           }}
         >
-          <UsmanLogo size={140} />
+          <img
+            src="/logo.png"
+            alt="Usman Laser Solutions"
+            className="mx-auto w-[280px] md:w-[360px] h-auto object-contain select-none"
+            draggable={false}
+          />
         </div>
 
-        {/* USMAN — silver chrome */}
-        <h1
-          className={cn(
-            "text-5xl md:text-7xl font-black tracking-tight transition-all duration-700",
-            "bg-gradient-to-b from-white via-zinc-300 to-zinc-500 bg-clip-text text-transparent",
-            "[text-shadow:_0_2px_24px_rgba(255,255,255,0.25)]",
-            phase >= 2 ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-          )}
-          style={{ letterSpacing: "-0.02em" }}
-        >
-          USMAN
-        </h1>
-
-        {/* LASER (red) + SOLUTIONS (silver) */}
-        <div
-          className={cn(
-            "mt-1 text-2xl md:text-3xl font-black tracking-[0.15em] transition-all duration-700 flex items-center justify-center gap-2",
-            phase >= 2 ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"
-          )}
-          style={{ transitionDelay: "0.15s" }}
-        >
-          <span
-            className="text-[#e30613] drop-shadow-[0_0_20px_rgba(227,6,19,0.7)]"
-            style={{ letterSpacing: "0.15em" }}
-          >
-            LASER
-          </span>
-          <span
-            className="bg-gradient-to-b from-white via-zinc-300 to-zinc-500 bg-clip-text text-transparent [text-shadow:_0_2px_24px_rgba(255,255,255,0.25)]"
-            style={{ letterSpacing: "0.15em" }}
-          >
-            SOLUTIONS
-          </span>
-        </div>
-
-        <div className="mt-10 relative h-[2px] w-72 mx-auto overflow-hidden rounded-full bg-white/5">
+        {/* Scan line */}
+        <div className="mt-6 relative h-[2px] w-72 mx-auto overflow-hidden rounded-full bg-white/5">
           <div
             className={cn(
               "absolute inset-y-0 left-0 bg-gradient-to-r from-transparent via-red-500 to-transparent transition-all duration-1000",
@@ -232,6 +180,7 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
           />
         </div>
 
+        {/* Loading dots */}
         <div
           className={cn(
             "mt-4 flex justify-center gap-1.5 transition-opacity duration-500",
@@ -484,26 +433,15 @@ export default function App() {
 
         {/* Header */}
         <header className="border-b border-white/5 bg-black/85 backdrop-blur-xl sticky top-0 z-30">
-          <div className="max-w-[1400px] mx-auto px-6 py-3.5 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3.5">
-              <UsmanLogo size={44} />
-              <div>
-                <h1
-                  className="font-black text-[17px] leading-tight tracking-tight bg-gradient-to-b from-white to-zinc-400 bg-clip-text text-transparent"
-                  style={{ letterSpacing: "-0.01em" }}
-                >
-                  USMAN
-                </h1>
-                <p
-                  className="text-[10px] leading-tight mt-0.5 font-black flex gap-1.5"
-                  style={{ letterSpacing: "0.18em" }}
-                >
-                  <span className="text-[#e30613]">LASER</span>
-                  <span className="bg-gradient-to-b from-white via-zinc-300 to-zinc-500 bg-clip-text text-transparent">
-                    SOLUTIONS
-                  </span>
-                </p>
-              </div>
+          <div className="max-w-[1400px] mx-auto px-6 py-2.5 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              {/* Small logo image */}
+              <img
+                src="/logo.png"
+                alt="Usman Laser Solutions"
+                className="h-12 w-auto object-contain select-none drop-shadow-[0_0_10px_rgba(227,6,19,0.4)]"
+                draggable={false}
+              />
             </div>
 
             <div className="hidden md:flex items-center gap-2">
@@ -561,11 +499,27 @@ export default function App() {
                   )}
                 >
                   {copied ? (
-                    <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M20 6L9 17l-5-5" />
                     </svg>
                   ) : (
-                    <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <rect x="9" y="9" width="13" height="13" rx="2" />
                       <path d="M5 15V5a2 2 0 012-2h10" />
                     </svg>
@@ -584,11 +538,23 @@ export default function App() {
                     )}
                   >
                     {isListening ? (
-                      <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="w-5 h-5"
+                        fill="currentColor"
+                      >
                         <rect x="6" y="6" width="12" height="12" rx="2" />
                       </svg>
                     ) : (
-                      <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
                         <rect x="9" y="2" width="6" height="12" rx="3" />
                         <path d="M5 10a7 7 0 0014 0" />
                         <path d="M12 17v4M8 21h8" />
@@ -776,7 +742,15 @@ export default function App() {
             {/* Status */}
             <div className="rounded-xl border border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 px-4 py-3 flex items-start gap-3">
               <div className="w-8 h-8 rounded-lg bg-emerald-500/20 grid place-items-center flex-shrink-0 mt-0.5">
-                <svg viewBox="0 0 24 24" className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  viewBox="0 0 24 24"
+                  className="w-4 h-4 text-emerald-400"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <path d="M20 6L9 17l-5-5" />
                 </svg>
               </div>
@@ -785,7 +759,8 @@ export default function App() {
                   Laser-ready output
                 </div>
                 <div className="text-[11px] text-emerald-400/70 mt-0.5 leading-relaxed">
-                  Black text on white background — machine black pixels mark karti hai.
+                  Black text on white background — machine black pixels mark
+                  karti hai.
                 </div>
               </div>
             </div>
@@ -796,7 +771,14 @@ export default function App() {
 
             {error && (
               <div className="rounded-xl border border-red-500/40 bg-gradient-to-br from-red-500/10 to-rose-500/5 text-red-200 px-4 py-3 text-sm flex items-start gap-3">
-                <svg viewBox="0 0 24 24" className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <svg
+                  viewBox="0 0 24 24"
+                  className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                >
                   <circle cx="12" cy="12" r="10" />
                   <path d="M12 8v4M12 16h.01" />
                 </svg>
@@ -815,14 +797,29 @@ export default function App() {
               >
                 {downloading ? (
                   <>
-                    <svg viewBox="0 0 24 24" className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="w-5 h-5 animate-spin"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                    >
                       <path d="M21 12a9 9 0 11-6.22-8.56" />
                     </svg>
                     <span>Preparing…</span>
                   </>
                 ) : (
                   <>
-                    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
                     </svg>
                     <span>Download PNG</span>
@@ -837,14 +834,29 @@ export default function App() {
               >
                 {vectorLoading ? (
                   <>
-                    <svg viewBox="0 0 24 24" className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="w-5 h-5 animate-spin"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                    >
                       <path d="M21 12a9 9 0 11-6.22-8.56" />
                     </svg>
                     <span>Building…</span>
                   </>
                 ) : (
                   <>
-                    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
                     </svg>
                     <span>Download DXF</span>
@@ -863,9 +875,15 @@ export default function App() {
 
             {result && (
               <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono">
-                <Stat label="Size" value={`${result.widthPx}×${result.heightPx}px`} />
+                <Stat
+                  label="Size"
+                  value={`${result.widthPx}×${result.heightPx}px`}
+                />
                 <Stat label="DPI" value={String(dpi)} />
-                <Stat label="mm" value={`${result.widthMm.toFixed(2)}×${result.heightMm.toFixed(2)}`} />
+                <Stat
+                  label="mm"
+                  value={`${result.widthMm.toFixed(2)}×${result.heightMm.toFixed(2)}`}
+                />
                 <Stat label="Dir" value={result.direction.toUpperCase()} />
               </div>
             )}
@@ -873,7 +891,15 @@ export default function App() {
             <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.03] to-white/[0.01] p-5 backdrop-blur-sm">
               <div className="flex items-center gap-2 mb-4">
                 <div className="w-7 h-7 rounded-lg bg-red-500/15 grid place-items-center">
-                  <svg viewBox="0 0 24 24" className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="w-4 h-4 text-red-500"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
                   </svg>
                 </div>
@@ -887,9 +913,12 @@ export default function App() {
                   title="Vector (Best)"
                   desc={
                     <>
-                      Download <span className="text-red-400 font-semibold">DXF</span> → EZCAD2{" "}
-                      <span className="text-zinc-200">File → Import</span> → Hatch (Angle{" "}
-                      <span className="font-mono text-red-400">45°</span>, Distance{" "}
+                      Download{" "}
+                      <span className="text-red-400 font-semibold">DXF</span> →
+                      EZCAD2 <span className="text-zinc-200">File → Import</span>{" "}
+                      → Hatch (Angle{" "}
+                      <span className="font-mono text-red-400">45°</span>,
+                      Distance{" "}
                       <span className="font-mono text-red-400">0.02mm</span>)
                     </>
                   }
@@ -897,12 +926,25 @@ export default function App() {
                 <Step
                   num={2}
                   title="Raster"
-                  desc={<>PNG → EZCAD2 <span className="text-zinc-200">Draw → Bitmap File</span></>}
+                  desc={
+                    <>
+                      PNG → EZCAD2{" "}
+                      <span className="text-zinc-200">Draw → Bitmap File</span>
+                    </>
+                  }
                 />
                 <Step
                   num={3}
                   title="Colour"
-                  desc={<>Always <span className="font-semibold text-white">Black text on White background</span> — machine black marks</>}
+                  desc={
+                    <>
+                      Always{" "}
+                      <span className="font-semibold text-white">
+                        Black text on White background
+                      </span>{" "}
+                      — machine black marks
+                    </>
+                  }
                 />
               </div>
             </div>
@@ -926,11 +968,27 @@ export default function App() {
             />
             <span>v{diag.version}</span>
             <span className="text-zinc-700">·</span>
-            <span>shaping: <span className={diag.shaping ? "text-emerald-400" : "text-red-400"}>{!diag.ready ? "…" : diag.shaping ? "OK" : "MISSING"}</span></span>
+            <span>
+              shaping:{" "}
+              <span
+                className={diag.shaping ? "text-emerald-400" : "text-red-400"}
+              >
+                {!diag.ready ? "…" : diag.shaping ? "OK" : "MISSING"}
+              </span>
+            </span>
             <span className="text-zinc-700">·</span>
-            <span>fonts {fontsOk}/{FONTS.length}</span>
+            <span>
+              fonts {fontsOk}/{FONTS.length}
+            </span>
             <span className="text-zinc-700">·</span>
-            <span>voice: <span className={voiceSupported ? "text-emerald-400" : "text-zinc-500"}>{voiceSupported ? "OK" : "N/A"}</span></span>
+            <span>
+              voice:{" "}
+              <span
+                className={voiceSupported ? "text-emerald-400" : "text-zinc-500"}
+              >
+                {voiceSupported ? "OK" : "N/A"}
+              </span>
+            </span>
           </button>
           {showDiag && (
             <pre className="mt-3 text-[11px] font-mono text-zinc-400 bg-black/60 border border-white/10 rounded-xl p-4 overflow-auto">
@@ -961,13 +1019,25 @@ export default function App() {
   );
 }
 
-function Card({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+function Card({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.04] to-white/[0.01] p-4 backdrop-blur-sm shadow-lg shadow-black/40">
       <div className="flex items-center justify-between mb-3.5">
-        <h2 className="text-[11px] font-bold uppercase tracking-widest text-zinc-400">{title}</h2>
+        <h2 className="text-[11px] font-bold uppercase tracking-widest text-zinc-400">
+          {title}
+        </h2>
         {hint && (
-          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md text-zinc-400 bg-white/5">{hint}</span>
+          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md text-zinc-400 bg-white/5">
+            {hint}
+          </span>
         )}
       </div>
       {children}
@@ -978,20 +1048,32 @@ function Card({ title, hint, children }: { title: string; hint?: string; childre
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.03] border border-white/10">
-      <span className="text-zinc-500 uppercase text-[10px] font-semibold">{label}</span>
+      <span className="text-zinc-500 uppercase text-[10px] font-semibold">
+        {label}
+      </span>
       <span className="text-zinc-200">{value}</span>
     </div>
   );
 }
 
-function Step({ num, title, desc }: { num: number; title: string; desc: React.ReactNode }) {
+function Step({
+  num,
+  title,
+  desc,
+}: {
+  num: number;
+  title: string;
+  desc: React.ReactNode;
+}) {
   return (
     <div className="flex gap-3">
       <div className="w-6 h-6 rounded-md bg-red-500/10 border border-red-500/30 grid place-items-center flex-shrink-0 text-[11px] font-bold text-red-400 mt-0.5">
         {num}
       </div>
       <div>
-        <div className="text-[12px] font-semibold text-zinc-200 mb-0.5">{title}</div>
+        <div className="text-[12px] font-semibold text-zinc-200 mb-0.5">
+          {title}
+        </div>
         <div className="text-[12px] text-zinc-500 leading-relaxed">{desc}</div>
       </div>
     </div>
