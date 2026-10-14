@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_FONT_ID, FONTS, ensureFontsLoaded } from "./lib/fonts";
 import {
   RenderResult,
-  TextColor,
   detectDirection,
   renderDesign,
   shapingSupported,
@@ -16,7 +15,7 @@ import {
   polylinesToSvg,
 } from "./lib/vector";
 
-const APP_VERSION = "1.5.0";
+const APP_VERSION = "1.7.0";
 const PRESETS = [
   { label: "Pen", mm: 25, icon: "🖊️" },
   { label: "Keychain", mm: 40, icon: "🔑" },
@@ -49,7 +48,6 @@ function resolveFontUrl(font: any): string {
   return `/fonts/${family}.ttf`;
 }
 
-/** Detects browser support for the Web Speech API */
 function speechSupported(): boolean {
   if (typeof window === "undefined") return false;
   const SR =
@@ -64,10 +62,7 @@ export default function App() {
   const [widthMm, setWidthMm] = useState(40);
   const [dpi, setDpi] = useState(300);
   const [lineSpacing, setLineSpacing] = useState(0.35);
-  const [invert, setInvert] = useState(false);
-  const [rotate, setRotate] = useState(false);
   const [edgeMode, setEdgeMode] = useState<EdgeMode>("solid");
-  const [textColor, setTextColor] = useState<TextColor>("white");
   const [diag, setDiag] = useState<Diag>({
     version: APP_VERSION,
     engine: "Canvas2D",
@@ -82,11 +77,15 @@ export default function App() {
   const [vectorLoading, setVectorLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // ------- VOICE STATE -------
+  // Voice
   const [isListening, setIsListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const recognitionRef = useRef<any>(null);
-  // ---------------------------
+
+  // FIXED settings — black text, white bg, no rotate
+  const textColor = "black" as const;
+  const invert = true;   // Add white background always ON
+  const rotate = false;  // Rotate removed
 
   const font = useMemo(
     () => FONTS.find((f) => f.id === fontId) ?? FONTS[0],
@@ -111,7 +110,7 @@ export default function App() {
   const debouncedSpacing = useDebounced(lineSpacing, 150);
   const debouncedWidth = useDebounced(widthMm, 150);
 
-  // -------- VOICE HANDLERS --------
+  // Voice handlers
   const startListening = useCallback(() => {
     if (!voiceSupported) {
       setError(
@@ -123,7 +122,6 @@ export default function App() {
       (window as any).SpeechRecognition ||
       (window as any).webkitSpeechRecognition;
     const rec = new SR();
-    // Detect language: Urdu if text has Arabic chars OR user is on default
     const isUrduContext = /[\u0590-\u08ff]/.test(text) || direction === "rtl";
     rec.lang = isUrduContext ? "ur-PK" : "en-US";
     rec.continuous = false;
@@ -142,11 +140,7 @@ export default function App() {
           interim += transcript;
         }
       }
-      // Show live as user speaks
-      setText((prev) => {
-        // Remove previous interim if we tracked it — simpler: append final + interim
-        return finalText || interim || prev;
-      });
+      setText(finalText || interim || "");
     };
 
     rec.onerror = (e: any) => {
@@ -160,16 +154,14 @@ export default function App() {
       }
     };
 
-    rec.onend = () => {
-      setIsListening(false);
-    };
+    rec.onend = () => setIsListening(false);
 
     recognitionRef.current = rec;
     try {
       rec.start();
       setIsListening(true);
       setError(null);
-    } catch (e) {
+    } catch {
       setError("Voice start nahi ho saka. Dobara try karein.");
     }
   }, [voiceSupported, text, direction]);
@@ -187,18 +179,15 @@ export default function App() {
     else startListening();
   }, [isListening, startListening, stopListening]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch {}
+        try { recognitionRef.current.stop(); } catch {}
       }
     };
   }, []);
-  // --------------------------------
 
+  // Render preview
   useEffect(() => {
     if (!diag.ready) return;
     try {
@@ -225,17 +214,8 @@ export default function App() {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, [
-    debouncedText,
-    font,
-    debouncedWidth,
-    dpi,
-    debouncedSpacing,
-    invert,
-    rotate,
-    edgeMode,
-    textColor,
-    diag,
-    direction,
+    debouncedText, font, debouncedWidth, dpi, debouncedSpacing,
+    edgeMode, diag, direction,
   ]);
 
   const download = useCallback(async () => {
@@ -264,26 +244,17 @@ export default function App() {
       try {
         const fontUrl = resolveFontUrl(font);
         const polylines = await textToPolylines({
-          text,
-          font,
-          fontUrl,
+          text, font, fontUrl,
           widthMm: Math.min(150, Math.max(1, widthMm)),
           lineSpacing,
         });
-
         if (!polylines.length) {
-          throw new Error(
-            "No vector paths generated. Check the font file exists in /fonts/."
-          );
+          throw new Error("No vector paths generated. Check the font file exists in /fonts/.");
         }
-
-        const content =
-          format === "dxf"
-            ? polylinesToDxf(polylines)
-            : polylinesToSvg(polylines);
-
-        const mime =
-          format === "dxf" ? "application/dxf" : "image/svg+xml";
+        const content = format === "dxf"
+          ? polylinesToDxf(polylines)
+          : polylinesToSvg(polylines);
+        const mime = format === "dxf" ? "application/dxf" : "image/svg+xml";
         const blob = new Blob([content], { type: mime });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -305,9 +276,7 @@ export default function App() {
       await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 1400);
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   }, [text]);
 
   const reset = useCallback(() => {
@@ -316,10 +285,7 @@ export default function App() {
     setWidthMm(40);
     setDpi(300);
     setLineSpacing(0.35);
-    setInvert(false);
-    setRotate(false);
     setEdgeMode("solid");
-    setTextColor("white");
   }, []);
 
   const fontsOk = Object.values(diag.fonts).filter(Boolean).length;
@@ -330,14 +296,7 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-5 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 grid place-items-center shadow-lg shadow-amber-500/20">
-              <svg
-                viewBox="0 0 24 24"
-                className="w-5 h-5 text-zinc-950"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-              >
+              <svg viewBox="0 0 24 24" className="w-5 h-5 text-zinc-950" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                 <path d="M12 3v6M12 15v6M3 12h6M15 12h6" />
                 <circle cx="12" cy="12" r="2.5" fill="currentColor" />
               </svg>
@@ -353,15 +312,14 @@ export default function App() {
           </div>
           <div className="hidden sm:flex items-center gap-2 text-xs text-zinc-400">
             <span className="px-2 py-1 rounded bg-zinc-900 border border-zinc-800">
-              {textColor === "white" ? "White = marked" : "Black = marked"}
+              Black text · White bg
             </span>
             <span className="px-2 py-1 rounded bg-zinc-900 border border-zinc-800">
-              Transparent bg
+              Laser-ready
             </span>
             <button
               onClick={reset}
               className="px-2 py-1 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-600 hover:text-zinc-200 transition"
-              title="Reset all settings"
             >
               Reset
             </button>
@@ -372,17 +330,14 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-5 py-6 grid lg:grid-cols-[420px_1fr] gap-6">
         <section className="space-y-5">
           {/* Text + Voice */}
-          <Card
-            title="Text"
-            hint={direction === "rtl" ? "RTL · Urdu" : "LTR · English"}
-          >
+          <Card title="Text" hint={direction === "rtl" ? "RTL · Urdu" : "LTR · English"}>
             <div className="relative">
               <textarea
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 dir={direction}
                 rows={3}
-                placeholder="Type Urdu or English…  (mic button se bol kar likhein)"
+                placeholder="Type Urdu or English…  (mic se bol kar likhein)"
                 style={{
                   fontFamily: `"${font.family}", sans-serif`,
                   fontWeight: (font as any).weight,
@@ -392,42 +347,23 @@ export default function App() {
                   direction === "rtl" ? "text-right" : "text-left"
                 )}
               />
-
-              {/* Copy button (top-left) */}
               <button
                 onClick={copyText}
                 title="Copy text"
                 className="absolute top-2 left-2 text-zinc-500 hover:text-amber-300 transition p-1 rounded"
               >
                 {copied ? (
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="w-4 h-4 text-emerald-400"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="3"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
+                  <svg viewBox="0 0 24 24" className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M20 6L9 17l-5-5" />
                   </svg>
                 ) : (
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
+                  <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="9" y="9" width="13" height="13" rx="2" />
                     <path d="M5 15V5a2 2 0 012-2h10" />
                   </svg>
                 )}
               </button>
 
-              {/* Voice (mic) button — WhatsApp style, bottom-right */}
               {voiceSupported && (
                 <button
                   onClick={toggleVoice}
@@ -440,23 +376,11 @@ export default function App() {
                   )}
                 >
                   {isListening ? (
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="w-5 h-5"
-                      fill="currentColor"
-                    >
+                    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
                       <rect x="6" y="6" width="12" height="12" rx="2" />
                     </svg>
                   ) : (
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
+                    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="9" y="2" width="6" height="12" rx="3" />
                       <path d="M5 10a7 7 0 0014 0" />
                       <path d="M12 17v4M8 21h8" />
@@ -465,7 +389,6 @@ export default function App() {
                 </button>
               )}
 
-              {/* Live recording indicator */}
               {isListening && (
                 <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-0.5 bg-red-500/20 border border-red-500/40 rounded-full text-[10px] text-red-300 font-mono">
                   <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
@@ -475,6 +398,7 @@ export default function App() {
             </div>
           </Card>
 
+          {/* Font */}
           <Card title="Font" hint={`${FONTS.length} available`}>
             <div className="grid grid-cols-2 gap-2">
               {FONTS.map((f) => (
@@ -509,6 +433,7 @@ export default function App() {
             </div>
           </Card>
 
+          {/* Width */}
           <Card title="Width" hint={`${widthMm} mm`}>
             <div className="flex gap-2 mb-3">
               {PRESETS.map((p) => (
@@ -552,6 +477,7 @@ export default function App() {
             </div>
           </Card>
 
+          {/* DPI + spacing */}
           <Card title="Resolution & Spacing">
             <div className="mb-4">
               <div className="text-xs text-zinc-500 mb-1.5">
@@ -593,97 +519,45 @@ export default function App() {
             </div>
           </Card>
 
-          <Card title="Options">
-            <div className="mb-3 pb-3 border-b border-zinc-800">
-              <div className="text-xs text-zinc-500 mb-2">Text color</div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => setTextColor("white")}
-                  className={cn(
-                    "rounded-lg border py-2 text-sm transition flex items-center justify-center gap-2",
-                    textColor === "white"
-                      ? "border-amber-500 bg-amber-500/10 text-amber-300"
-                      : "border-zinc-800 bg-zinc-950 hover:border-zinc-600"
-                  )}
-                >
-                  <span className="w-3 h-3 rounded-full bg-white border border-zinc-600" />
-                  White
-                  <span className="text-[10px] text-zinc-500">laser</span>
-                </button>
-                <button
-                  onClick={() => setTextColor("black")}
-                  className={cn(
-                    "rounded-lg border py-2 text-sm transition flex items-center justify-center gap-2",
-                    textColor === "black"
-                      ? "border-amber-500 bg-amber-500/10 text-amber-300"
-                      : "border-zinc-800 bg-zinc-950 hover:border-zinc-600"
-                  )}
-                >
-                  <span className="w-3 h-3 rounded-full bg-black border border-zinc-600" />
-                  Black
-                  <span className="text-[10px] text-zinc-500">machine</span>
-                </button>
-              </div>
-            </div>
-
-            <Toggle
-              label="Add white background"
-              hint="Sirf dekhne/print ke liye — laser ke liye OFF"
-              checked={invert}
-              onChange={setInvert}
-            />
-            <Toggle
-              label="Rotate 90°"
-              hint="Vertical pen designs"
-              checked={rotate}
-              onChange={setRotate}
-            />
-
-            <div className="mt-2 pt-3 border-t border-zinc-800">
-              <div className="text-xs text-zinc-500 mb-2">
-                Edge mode (PNG only)
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => setEdgeMode("solid")}
-                  className={cn(
-                    "rounded-lg border py-2 text-sm transition",
-                    edgeMode === "solid"
-                      ? "border-amber-500 bg-amber-500/10 text-amber-300"
-                      : "border-zinc-800 bg-zinc-950 hover:border-zinc-600"
-                  )}
-                >
-                  Solid
-                  <div className="text-[10px] text-zinc-500 mt-0.5">
-                    best for laser
-                  </div>
-                </button>
-                <button
-                  onClick={() => setEdgeMode("smooth")}
-                  className={cn(
-                    "rounded-lg border py-2 text-sm transition",
-                    edgeMode === "smooth"
-                      ? "border-amber-500 bg-amber-500/10 text-amber-300"
-                      : "border-zinc-800 bg-zinc-950 hover:border-zinc-600"
-                  )}
-                >
-                  Smooth
-                  <div className="text-[10px] text-zinc-500 mt-0.5">
-                    anti-aliased
-                  </div>
-                </button>
-              </div>
+          {/* Edge mode only */}
+          <Card title="Edge mode (PNG only)">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setEdgeMode("solid")}
+                className={cn(
+                  "rounded-lg border py-2 text-sm transition",
+                  edgeMode === "solid"
+                    ? "border-amber-500 bg-amber-500/10 text-amber-300"
+                    : "border-zinc-800 bg-zinc-950 hover:border-zinc-600"
+                )}
+              >
+                Solid
+                <div className="text-[10px] text-zinc-500 mt-0.5">
+                  best for laser
+                </div>
+              </button>
+              <button
+                onClick={() => setEdgeMode("smooth")}
+                className={cn(
+                  "rounded-lg border py-2 text-sm transition",
+                  edgeMode === "smooth"
+                    ? "border-amber-500 bg-amber-500/10 text-amber-300"
+                    : "border-zinc-800 bg-zinc-950 hover:border-zinc-600"
+                )}
+              >
+                Smooth
+                <div className="text-[10px] text-zinc-500 mt-0.5">
+                  anti-aliased
+                </div>
+              </button>
             </div>
           </Card>
 
-          {invert && (
-            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-300 px-4 py-3 text-xs leading-relaxed">
-              <strong className="font-semibold">
-                ⚠ White background ON.
-              </strong>{" "}
-              Sirf dekhne ke liye hai. Laser export ke liye <b>OFF</b> karo.
-            </div>
-          )}
+          {/* Info banner */}
+          <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 px-4 py-3 text-xs leading-relaxed">
+            <strong className="font-semibold">✓ Laser-ready output:</strong>{" "}
+            Black text on white background. Machine black pixels mark karti hai.
+          </div>
         </section>
 
         <section className="space-y-4">
@@ -701,30 +575,6 @@ export default function App() {
               disabled={!result || downloading}
               className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-amber-400 to-orange-500 text-zinc-950 font-semibold px-5 py-3 shadow-lg shadow-amber-500/20 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition"
             >
-              {downloading ? (
-                <svg
-                  viewBox="0 0 24 24"
-                  className="w-5 h-5 animate-spin"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                >
-                  <path d="M21 12a9 9 0 11-6.22-8.56" />
-                </svg>
-              ) : (
-                <svg
-                  viewBox="0 0 24 24"
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
-                </svg>
-              )}
               {downloading ? "Preparing…" : "Download PNG"}
             </button>
 
@@ -733,30 +583,6 @@ export default function App() {
               disabled={vectorLoading}
               className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-emerald-400 to-teal-500 text-zinc-950 font-semibold px-5 py-3 shadow-lg shadow-emerald-500/20 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition"
             >
-              {vectorLoading ? (
-                <svg
-                  viewBox="0 0 24 24"
-                  className="w-5 h-5 animate-spin"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                >
-                  <path d="M21 12a9 9 0 11-6.22-8.56" />
-                </svg>
-              ) : (
-                <svg
-                  viewBox="0 0 24 24"
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
-                </svg>
-              )}
               {vectorLoading ? "Building…" : "Download DXF (vector)"}
             </button>
 
@@ -770,15 +596,10 @@ export default function App() {
 
             {result && (
               <div className="text-xs text-zinc-400 font-mono space-x-3">
-                <span>
-                  {result.widthPx}×{result.heightPx} px
-                </span>
+                <span>{result.widthPx}×{result.heightPx} px</span>
                 <span>{dpi} dpi</span>
-                <span>
-                  {result.widthMm.toFixed(2)}×{result.heightMm.toFixed(2)} mm
-                </span>
+                <span>{result.widthMm.toFixed(2)}×{result.heightMm.toFixed(2)} mm</span>
                 <span className="uppercase">{result.direction}</span>
-                <span className="uppercase text-amber-300">{textColor}</span>
               </div>
             )}
           </div>
@@ -788,24 +609,19 @@ export default function App() {
               EZCAD2 workflow
             </div>
             <p>
-              <b className="text-zinc-200">Vector (recommended):</b> Download{" "}
+              <b className="text-zinc-200">Vector:</b> Download{" "}
               <span className="text-emerald-300">DXF</span> → EZCAD2 →{" "}
-              <span className="text-zinc-200">File → Import</span> → apply Hatch
+              <span className="text-zinc-200">File → Import</span> → Hatch
               (Angle 45°, Line Distance 0.02mm).
             </p>
             <p>
-              <b className="text-zinc-200">Raster:</b> Download PNG → EZCAD2 →{" "}
+              <b className="text-zinc-200">Raster:</b> PNG → EZCAD2 →{" "}
               <span className="text-zinc-200">Draw → Bitmap File</span>.
             </p>
             <p>
-              1. Machine <span className="text-amber-300">black</span> mark
-              karti hai → Text color <b>Black</b>, White bg <b>OFF</b>.
+              Output hamesha: <b>Black text · White background</b> — machine
+              black mark karti hai.
             </p>
-            <p>
-              2. Machine <span className="text-amber-300">white</span> mark
-              karti hai → Text color <b>White</b>, White bg <b>OFF</b>.
-            </p>
-            <p>3. Sirf screen pe check karne ke liye White bg ON karo.</p>
           </div>
         </section>
       </main>
@@ -818,17 +634,12 @@ export default function App() {
           <span
             className={cn(
               "w-2 h-2 rounded-full",
-              !diag.ready
-                ? "bg-zinc-500 animate-pulse"
-                : diag.shaping
-                ? "bg-emerald-400"
-                : "bg-red-500"
+              !diag.ready ? "bg-zinc-500 animate-pulse" : diag.shaping ? "bg-emerald-400" : "bg-red-500"
             )}
           />
           v{diag.version} · {diag.engine.split(" ")[0]} · shaping:{" "}
           {!diag.ready ? "checking…" : diag.shaping ? "OK" : "MISSING"} · fonts{" "}
-          {fontsOk}/{FONTS.length} · voice:{" "}
-          {voiceSupported ? "OK" : "N/A"}
+          {fontsOk}/{FONTS.length} · voice: {voiceSupported ? "OK" : "N/A"}
         </button>
         {showDiag && (
           <pre className="mt-2 text-[11px] font-mono text-zinc-400 bg-zinc-900 border border-zinc-800 rounded-lg p-3 overflow-auto">
@@ -839,9 +650,9 @@ export default function App() {
                 render_engine: diag.engine,
                 raqm_equivalent_shaping: diag.shaping,
                 voice_supported: voiceSupported,
-                edge_mode: edgeMode,
                 text_color: textColor,
                 white_background: invert,
+                edge_mode: edgeMode,
                 fonts: diag.fonts,
                 user_agent: navigator.userAgent,
                 field_mm: 150,
@@ -857,65 +668,14 @@ export default function App() {
   );
 }
 
-function Card({
-  title,
-  hint,
-  children,
-}: {
-  title: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
+function Card({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-          {title}
-        </h2>
-        {hint && (
-          <span className="text-[11px] font-mono text-amber-300/80">
-            {hint}
-          </span>
-        )}
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">{title}</h2>
+        {hint && <span className="text-[11px] font-mono text-amber-300/80">{hint}</span>}
       </div>
       {children}
     </div>
-  );
-}
-
-function Toggle({
-  label,
-  hint,
-  checked,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <button
-      onClick={() => onChange(!checked)}
-      className="w-full flex items-center justify-between py-2 group"
-    >
-      <div className="text-left">
-        <div className="text-sm text-zinc-200">{label}</div>
-        <div className="text-xs text-zinc-500">{hint}</div>
-      </div>
-      <span
-        className={cn(
-          "w-11 h-6 rounded-full relative transition",
-          checked ? "bg-amber-500" : "bg-zinc-700"
-        )}
-      >
-        <span
-          className={cn(
-            "absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all",
-            checked ? "left-[22px]" : "left-0.5"
-          )}
-        />
-      </span>
-    </button>
   );
 }
