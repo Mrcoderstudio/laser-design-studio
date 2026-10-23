@@ -15,7 +15,7 @@ import {
   polylinesToSvg,
 } from "./lib/vector";
 
-const APP_VERSION = "3.4.0";
+const APP_VERSION = "4.1.0 (Web)";
 const PRESETS = [
   { label: "Pen", mm: 25, icon: "🖊️" },
   { label: "Keychain", mm: 40, icon: "🔑" },
@@ -45,42 +45,9 @@ function useDebounced<T>(value: T, ms: number) {
 
 function resolveFontUrl(font: any): string {
   if (font?.url) return font.url;
-  if (font?.file) return `/fonts/${font.file}`;
+  if (font?.file) return `./fonts/${font.file}`;
   const family = String(font?.family ?? "NotoNastaliqUrdu").replace(/\s+/g, "");
-  return `/fonts/${family}.ttf`;
-}
-
-function speechSupported(): boolean {
-  if (typeof window === "undefined") return false;
-  const SR =
-    (window as any).SpeechRecognition ||
-    (window as any).webkitSpeechRecognition;
-  return !!SR;
-}
-
-/* ============================================================
-   LOGO — uses the real logo.png from /public
-   ============================================================ */
-function UsmanLogo({
-  size = 44,
-  className = "",
-}: {
-  size?: number;
-  className?: string;
-}) {
-  return (
-    <img
-      src="/logo.png"
-      alt="Usman Laser Solutions"
-      width={size}
-      height={size}
-      className={cn(
-        "object-contain drop-shadow-[0_0_14px_rgba(227,6,19,0.55)]",
-        className
-      )}
-      style={{ width: size, height: size }}
-    />
-  );
+  return `./fonts/${family}.ttf`;
 }
 
 /* ============================================================
@@ -107,7 +74,6 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
         phase >= 4 ? "opacity-0 pointer-events-none" : "opacity-100"
       )}
     >
-      {/* Ambient red glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] bg-red-600/20 rounded-full blur-[140px] animate-pulse" />
         <div
@@ -116,7 +82,6 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
         />
       </div>
 
-      {/* Grid pattern */}
       <div
         className="absolute inset-0 opacity-[0.04]"
         style={{
@@ -126,7 +91,6 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
         }}
       />
 
-      {/* Red laser beam sweep */}
       {phase >= 3 && (
         <div
           className="absolute inset-0 pointer-events-none"
@@ -150,7 +114,6 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
       `}</style>
 
       <div className="relative text-center px-6">
-        {/* Logo image */}
         <div
           className={cn(
             "mx-auto mb-4 transition-all duration-700",
@@ -162,14 +125,13 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
           }}
         >
           <img
-            src="/logo.png"
+            src="./logo.png"
             alt="Usman Laser Solutions"
             className="mx-auto w-[280px] md:w-[360px] h-auto object-contain select-none"
             draggable={false}
           />
         </div>
 
-        {/* Scan line */}
         <div className="mt-6 relative h-[2px] w-72 mx-auto overflow-hidden rounded-full bg-white/5">
           <div
             className={cn(
@@ -180,7 +142,6 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
           />
         </div>
 
-        {/* Loading dots */}
         <div
           className={cn(
             "mt-4 flex justify-center gap-1.5 transition-opacity duration-500",
@@ -221,6 +182,7 @@ export default function App() {
   const [vectorLoading, setVectorLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // Voice States
   const [isListening, setIsListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const recognitionRef = useRef<any>(null);
@@ -246,15 +208,22 @@ export default function App() {
         ready: true,
       });
     });
-    setVoiceSupported(speechSupported());
+
+    if (typeof window !== "undefined") {
+      const SR =
+        (window as any).SpeechRecognition ||
+        (window as any).webkitSpeechRecognition;
+      setVoiceSupported(!!SR);
+    }
   }, []);
 
   const debouncedText = useDebounced(text, 250);
   const debouncedWidth = useDebounced(widthMm, 150);
 
+  // Voice Handlers
   const startListening = useCallback(() => {
     if (!voiceSupported) {
-      setError("Voice not supported. Use Chrome or Edge.");
+      setError("Voice aapke browser mein support nahi hai. Chrome ya Edge use karein.");
       return;
     }
     const SR =
@@ -266,7 +235,9 @@ export default function App() {
     rec.continuous = false;
     rec.interimResults = true;
     rec.maxAlternatives = 1;
+
     let finalText = "";
+
     rec.onresult = (event: any) => {
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -276,13 +247,16 @@ export default function App() {
       }
       setText(finalText || interim || "");
     };
+
     rec.onerror = (e: any) => {
       setIsListening(false);
       if (e.error === "not-allowed") setError("Mic permission denied.");
       else if (e.error === "no-speech") setError("No speech detected.");
       else setError("Voice error: " + e.error);
     };
+
     rec.onend = () => setIsListening(false);
+
     recognitionRef.current = rec;
     try {
       rec.start();
@@ -309,9 +283,7 @@ export default function App() {
   useEffect(() => {
     return () => {
       if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch {}
+        try { recognitionRef.current.stop(); } catch {}
       }
     };
   }, []);
@@ -435,9 +407,8 @@ export default function App() {
         <header className="border-b border-white/5 bg-black/85 backdrop-blur-xl sticky top-0 z-30">
           <div className="max-w-[1400px] mx-auto px-6 py-2.5 flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              {/* Small logo image */}
               <img
-                src="/logo.png"
+                src="./logo.png"
                 alt="Usman Laser Solutions"
                 className="h-12 w-auto object-contain select-none drop-shadow-[0_0_10px_rgba(227,6,19,0.4)]"
                 draggable={false}
@@ -476,7 +447,7 @@ export default function App() {
                   onChange={(e) => setText(e.target.value)}
                   dir={direction}
                   rows={3}
-                  placeholder="Type Urdu or English…"
+                  placeholder="Type Urdu or English… (mic se bol kar likhein)"
                   style={{
                     fontFamily: `"${font.family}", sans-serif`,
                     fontWeight: (font as any).weight,
@@ -488,6 +459,7 @@ export default function App() {
                   )}
                 />
 
+                {/* Copy Button */}
                 <button
                   onClick={copyText}
                   title="Copy"
@@ -499,33 +471,18 @@ export default function App() {
                   )}
                 >
                   {copied ? (
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="w-4 h-4"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="3"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
+                    <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M20 6L9 17l-5-5" />
                     </svg>
                   ) : (
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="w-4 h-4"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
+                    <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="9" y="9" width="13" height="13" rx="2" />
                       <path d="M5 15V5a2 2 0 012-2h10" />
                     </svg>
                   )}
                 </button>
 
+                {/* Voice Button */}
                 {voiceSupported && (
                   <button
                     onClick={toggleVoice}
@@ -538,23 +495,11 @@ export default function App() {
                     )}
                   >
                     {isListening ? (
-                      <svg
-                        viewBox="0 0 24 24"
-                        className="w-5 h-5"
-                        fill="currentColor"
-                      >
+                      <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
                         <rect x="6" y="6" width="12" height="12" rx="2" />
                       </svg>
                     ) : (
-                      <svg
-                        viewBox="0 0 24 24"
-                        className="w-5 h-5"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
+                      <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                         <rect x="9" y="2" width="6" height="12" rx="3" />
                         <path d="M5 10a7 7 0 0014 0" />
                         <path d="M12 17v4M8 21h8" />
@@ -738,32 +683,6 @@ export default function App() {
                 </button>
               </div>
             </Card>
-
-            {/* Status */}
-            <div className="rounded-xl border border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 px-4 py-3 flex items-start gap-3">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/20 grid place-items-center flex-shrink-0 mt-0.5">
-                <svg
-                  viewBox="0 0 24 24"
-                  className="w-4 h-4 text-emerald-400"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M20 6L9 17l-5-5" />
-                </svg>
-              </div>
-              <div>
-                <div className="text-[12px] font-semibold text-emerald-300">
-                  Laser-ready output
-                </div>
-                <div className="text-[11px] text-emerald-400/70 mt-0.5 leading-relaxed">
-                  Black text on white background — machine black pixels mark
-                  karti hai.
-                </div>
-              </div>
-            </div>
           </section>
 
           <section className="space-y-5">
@@ -771,14 +690,7 @@ export default function App() {
 
             {error && (
               <div className="rounded-xl border border-red-500/40 bg-gradient-to-br from-red-500/10 to-rose-500/5 text-red-200 px-4 py-3 text-sm flex items-start gap-3">
-                <svg
-                  viewBox="0 0 24 24"
-                  className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                >
+                <svg viewBox="0 0 24 24" className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                   <circle cx="12" cy="12" r="10" />
                   <path d="M12 8v4M12 16h.01" />
                 </svg>
@@ -797,29 +709,14 @@ export default function App() {
               >
                 {downloading ? (
                   <>
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="w-5 h-5 animate-spin"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                    >
+                    <svg viewBox="0 0 24 24" className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                       <path d="M21 12a9 9 0 11-6.22-8.56" />
                     </svg>
                     <span>Preparing…</span>
                   </>
                 ) : (
                   <>
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
+                    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
                     </svg>
                     <span>Download PNG</span>
@@ -834,29 +731,14 @@ export default function App() {
               >
                 {vectorLoading ? (
                   <>
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="w-5 h-5 animate-spin"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                    >
+                    <svg viewBox="0 0 24 24" className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                       <path d="M21 12a9 9 0 11-6.22-8.56" />
                     </svg>
                     <span>Building…</span>
                   </>
                 ) : (
                   <>
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
+                    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
                     </svg>
                     <span>Download DXF</span>
@@ -875,15 +757,9 @@ export default function App() {
 
             {result && (
               <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono">
-                <Stat
-                  label="Size"
-                  value={`${result.widthPx}×${result.heightPx}px`}
-                />
+                <Stat label="Size" value={`${result.widthPx}×${result.heightPx}px`} />
                 <Stat label="DPI" value={String(dpi)} />
-                <Stat
-                  label="mm"
-                  value={`${result.widthMm.toFixed(2)}×${result.heightMm.toFixed(2)}`}
-                />
+                <Stat label="mm" value={`${result.widthMm.toFixed(2)}×${result.heightMm.toFixed(2)}`} />
                 <Stat label="Dir" value={result.direction.toUpperCase()} />
               </div>
             )}
@@ -891,15 +767,7 @@ export default function App() {
             <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.03] to-white/[0.01] p-5 backdrop-blur-sm">
               <div className="flex items-center gap-2 mb-4">
                 <div className="w-7 h-7 rounded-lg bg-red-500/15 grid place-items-center">
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="w-4 h-4 text-red-500"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
+                  <svg viewBox="0 0 24 24" className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
                   </svg>
                 </div>
@@ -913,12 +781,9 @@ export default function App() {
                   title="Vector (Best)"
                   desc={
                     <>
-                      Download{" "}
-                      <span className="text-red-400 font-semibold">DXF</span> →
-                      EZCAD2 <span className="text-zinc-200">File → Import</span>{" "}
-                      → Hatch (Angle{" "}
-                      <span className="font-mono text-red-400">45°</span>,
-                      Distance{" "}
+                      Download <span className="text-red-400 font-semibold">DXF</span> → EZCAD2{" "}
+                      <span className="text-zinc-200">File → Import</span> → Hatch (Angle{" "}
+                      <span className="font-mono text-red-400">45°</span>, Distance{" "}
                       <span className="font-mono text-red-400">0.02mm</span>)
                     </>
                   }
@@ -926,25 +791,12 @@ export default function App() {
                 <Step
                   num={2}
                   title="Raster"
-                  desc={
-                    <>
-                      PNG → EZCAD2{" "}
-                      <span className="text-zinc-200">Draw → Bitmap File</span>
-                    </>
-                  }
+                  desc={<>PNG → EZCAD2 <span className="text-zinc-200">Draw → Bitmap File</span></>}
                 />
                 <Step
                   num={3}
                   title="Colour"
-                  desc={
-                    <>
-                      Always{" "}
-                      <span className="font-semibold text-white">
-                        Black text on White background
-                      </span>{" "}
-                      — machine black marks
-                    </>
-                  }
+                  desc={<>Always <span className="font-semibold text-white">Black text on White background</span> — machine black marks</>}
                 />
               </div>
             </div>
@@ -968,27 +820,11 @@ export default function App() {
             />
             <span>v{diag.version}</span>
             <span className="text-zinc-700">·</span>
-            <span>
-              shaping:{" "}
-              <span
-                className={diag.shaping ? "text-emerald-400" : "text-red-400"}
-              >
-                {!diag.ready ? "…" : diag.shaping ? "OK" : "MISSING"}
-              </span>
-            </span>
+            <span>shaping: <span className={diag.shaping ? "text-emerald-400" : "text-red-400"}>{!diag.ready ? "…" : diag.shaping ? "OK" : "MISSING"}</span></span>
             <span className="text-zinc-700">·</span>
-            <span>
-              fonts {fontsOk}/{FONTS.length}
-            </span>
+            <span>fonts {fontsOk}/{FONTS.length}</span>
             <span className="text-zinc-700">·</span>
-            <span>
-              voice:{" "}
-              <span
-                className={voiceSupported ? "text-emerald-400" : "text-zinc-500"}
-              >
-                {voiceSupported ? "OK" : "N/A"}
-              </span>
-            </span>
+            <span>voice: <span className={voiceSupported ? "text-emerald-400" : "text-zinc-500"}>{voiceSupported ? "OK" : "N/A"}</span></span>
           </button>
           {showDiag && (
             <pre className="mt-3 text-[11px] font-mono text-zinc-400 bg-black/60 border border-white/10 rounded-xl p-4 overflow-auto">
@@ -1019,15 +855,7 @@ export default function App() {
   );
 }
 
-function Card({
-  title,
-  hint,
-  children,
-}: {
-  title: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
+function Card({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.04] to-white/[0.01] p-4 backdrop-blur-sm shadow-lg shadow-black/40">
       <div className="flex items-center justify-between mb-3.5">
@@ -1056,24 +884,14 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Step({
-  num,
-  title,
-  desc,
-}: {
-  num: number;
-  title: string;
-  desc: React.ReactNode;
-}) {
+function Step({ num, title, desc }: { num: number; title: string; desc: React.ReactNode }) {
   return (
     <div className="flex gap-3">
       <div className="w-6 h-6 rounded-md bg-red-500/10 border border-red-500/30 grid place-items-center flex-shrink-0 text-[11px] font-bold text-red-400 mt-0.5">
         {num}
       </div>
       <div>
-        <div className="text-[12px] font-semibold text-zinc-200 mb-0.5">
-          {title}
-        </div>
+        <div className="text-[12px] font-semibold text-zinc-200 mb-0.5">{title}</div>
         <div className="text-[12px] text-zinc-500 leading-relaxed">{desc}</div>
       </div>
     </div>

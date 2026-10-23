@@ -14,10 +14,6 @@ interface Polyline {
   y: number;
 }
 
-/**
- * Render text as BLACK text on WHITE background.
- * ImageTracer needs solid pixels — transparent bg fails.
- */
 async function renderToCanvas(
   text: string,
   font: FontDef,
@@ -28,9 +24,7 @@ async function renderToCanvas(
 
   try {
     await document.fonts.load(`${weight} 300px "${fontFamily}"`, "اب");
-  } catch {
-    /* ignore */
-  }
+  } catch {}
 
   const lines = text.replace(/\r/g, "").split("\n");
   const FONT_PX = 300;
@@ -50,8 +44,7 @@ async function renderToCanvas(
   const pad = FONT_PX * font.padFactor;
   const lineHeight = FONT_PX * 1.4;
   const gap = lineHeight * lineSpacing;
-  const totalH =
-    lines.length * lineHeight + (lines.length - 1) * gap + pad * 2;
+  const totalH = lines.length * lineHeight + (lines.length - 1) * gap + pad * 2;
   const totalW = maxW + pad * 2;
 
   const canvas = document.createElement("canvas");
@@ -59,11 +52,9 @@ async function renderToCanvas(
   canvas.height = Math.max(1, Math.ceil(totalH));
   const ctx = canvas.getContext("2d", { alpha: false })!;
 
-  // WHITE background — critical for ImageTracer
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // BLACK text
   ctx.font = `${weight} ${FONT_PX}px "${fontFamily}"`;
   ctx.fillStyle = "#000000";
   ctx.textBaseline = "top";
@@ -80,7 +71,6 @@ async function renderToCanvas(
   return canvas;
 }
 
-/** Trace the canvas to SVG paths using ImageTracer */
 function traceCanvas(canvas: HTMLCanvasElement): string {
   const ctx = canvas.getContext("2d")!;
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -88,7 +78,7 @@ function traceCanvas(canvas: HTMLCanvasElement): string {
   return ImageTracer.imagedataToSVG(imageData, {
     ltres: 0.5,
     qtres: 0.5,
-    pathomit: 8,
+    pathomit: 2, // Keep small dots (Zer, Nukta)
     rightangleenhance: false,
     colorsampling: 0,
     numberofcolors: 2,
@@ -106,15 +96,7 @@ function traceCanvas(canvas: HTMLCanvasElement): string {
   });
 }
 
-/**
- * Extract only the TEXT paths from SVG.
- * Filters out the giant background path.
- */
-function extractTextPathData(
-  svg: string,
-  imgW: number,
-  imgH: number
-): string[] {
+function extractTextPathData(svg: string, imgW: number, imgH: number): string[] {
   const paths: string[] = [];
   const re = /<path[^>]*\sd="([^"]+)"/g;
   const imgArea = imgW * imgH;
@@ -134,7 +116,6 @@ function extractTextPathData(
     }
     if (!isFinite(minX)) continue;
     const area = (maxX - minX) * (maxY - minY);
-    // Skip background (covers >85% of image)
     if (area / imgArea < 0.85) {
       paths.push(d);
     }
@@ -142,21 +123,16 @@ function extractTextPathData(
   return paths;
 }
 
-/** Parse SVG path d attribute into polylines */
 function parsePath(d: string): Polyline[][] {
   const polylines: Polyline[][] = [];
   let current: Polyline[] = [];
-  let cx = 0,
-    cy = 0;
+  let cx = 0, cy = 0;
 
   const tokens = d.match(/[MLCQZmlcqz]|-?\d*\.?\d+/g) || [];
   let i = 0;
   const num = () => parseFloat(tokens[i++]);
 
-  const addC = (
-    x0: number, y0: number, x1: number, y1: number,
-    x2: number, y2: number, x3: number, y3: number
-  ) => {
+  const addC = (x0: number, y0: number, x1: number, y1: number, x2: number, y2: number, x3: number, y3: number) => {
     const dist = Math.hypot(x3 - x0, y3 - y0);
     const steps = Math.max(6, Math.ceil(dist / 1.5));
     for (let s = 1; s <= steps; s++) {
@@ -169,9 +145,7 @@ function parsePath(d: string): Polyline[][] {
     }
   };
 
-  const addQ = (
-    x0: number, y0: number, x1: number, y1: number, x2: number, y2: number
-  ) => {
+  const addQ = (x0: number, y0: number, x1: number, y1: number, x2: number, y2: number) => {
     const dist = Math.hypot(x2 - x0, y2 - y0);
     const steps = Math.max(6, Math.ceil(dist / 1.5));
     for (let s = 1; s <= steps; s++) {
@@ -227,10 +201,7 @@ function parsePath(d: string): Polyline[][] {
   return polylines;
 }
 
-/** Main: text → polylines in millimetres */
-export async function textToPolylines(
-  opts: VectorOptions
-): Promise<Polyline[][]> {
+export async function textToPolylines(opts: VectorOptions): Promise<Polyline[][]> {
   const canvas = await renderToCanvas(opts.text, opts.font, opts.lineSpacing);
   const svg = traceCanvas(canvas);
   const pathData = extractTextPathData(svg, canvas.width, canvas.height);
@@ -244,7 +215,6 @@ export async function textToPolylines(
     throw new Error("Tracing produced no paths. Try a different font.");
   }
 
-  // Bounding box in canvas pixels
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const poly of allPolylines) {
     for (const pt of poly) {
@@ -255,33 +225,33 @@ export async function textToPolylines(
     }
   }
   const w = maxX - minX;
-
-  // Scale pixels → mm
   const scale = opts.widthMm / w;
 
   return allPolylines.map((poly) =>
     poly.map((pt) => ({
       x: (pt.x - minX) * scale,
-      y: (maxY - pt.y) * scale, // flip Y for CAD
+      y: (maxY - pt.y) * scale,
     }))
   );
 }
 
-/** DXF using LINE entities (widest compatibility with EZCAD2) */
+// 🔥 YE HAI ASLI FIX - EZCAD2 KE LIYE PURANA POLYLINE FORMAT 🔥
 export function polylinesToDxf(polylines: Polyline[][]): string {
   const parts: string[] = [];
   parts.push("0\nSECTION\n2\nENTITIES\n");
 
   for (const poly of polylines) {
-    for (let i = 0; i < poly.length - 1; i++) {
-      const p1 = poly[i];
-      const p2 = poly[i + 1];
-      parts.push(
-        "0\nLINE\n8\n0\n" +
-          `10\n${p1.x.toFixed(4)}\n20\n${p1.y.toFixed(4)}\n30\n0.0\n` +
-          `11\n${p2.x.toFixed(4)}\n21\n${p2.y.toFixed(4)}\n31\n0.0\n`
-      );
+    if (poly.length < 2) continue;
+
+    // Old-school POLYLINE format (Best for EZCAD2 hatching)
+    // 66=1 means vertices follow, 70=1 means Closed
+    parts.push("0\nPOLYLINE\n8\n0\n66\n1\n70\n1\n");
+
+    for (const pt of poly) {
+      parts.push(`0\nVERTEX\n8\n0\n10\n${pt.x.toFixed(4)}\n20\n${pt.y.toFixed(4)}\n30\n0.0\n`);
     }
+
+    parts.push("0\nSEQEND\n");
   }
 
   parts.push("0\nENDSEC\n0\nEOF\n");
